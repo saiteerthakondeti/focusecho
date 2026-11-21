@@ -4,7 +4,7 @@ FocusEcho AI is a **real-time focus recovery, digital productivity, and behavior
 
 ---
 
-## 🚀 Key Features
+### 🚀 Key Features
 
 *   **⚡ Real-Time App & Tab Detection**:
     *   **Android**: Low-battery 3-second native poller (`UsageStatsManager`) with continuous dwell tracking.
