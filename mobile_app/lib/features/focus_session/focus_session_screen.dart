@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -9,6 +10,7 @@ import '../ai_coach/widgets/coach_opt_in_dialog.dart';
 import '../distraction_alert/distraction_alert_modal.dart';
 import '../distraction_alert/intervention_overlay.dart';
 import 'focus_session_state.dart';
+import 'study_planner.dart';
 import 'focus_session_viewmodel.dart';
 import 'session_summary_screen.dart';
 import 'widgets/live_distraction_feed.dart';
@@ -340,6 +342,39 @@ class _SessionSetupView extends StatefulWidget {
 class _SessionSetupViewState extends State<_SessionSetupView> {
   late final TextEditingController _intentCtrl;
   final _coachService = AiCoachService();
+  bool _strict = false;
+  final _allowed = <String>{};
+  Map<String,String> _installed = {};
+  Future<void> _start(String app, String intent) async {
+    if (_strict && !kIsWeb) {
+      const permissions=MethodChannel('focus_echo/permissions');
+      if(await permissions.invokeMethod<bool>('checkUsageAccess')!=true){
+        if(!mounted)return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Grant Usage Access, then start strict focus.')));
+        await permissions.invokeMethod<bool>('openUsageSettings');
+        return;
+      }
+      const channel = MethodChannel('focus_echo/session');
+      if (await channel.invokeMethod<bool>('overlayPermission') != true) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Enable the pause screen over other apps before starting strict focus.')));
+        return;
+      }
+    }
+    if (!mounted) return;
+    if (_strict && kIsWeb && !widget.state.extensionConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Connect the FocusEcho extension before starting strict focus.')));
+      return;
+    }
+    await widget.vm.startSession(app,intent:intent,strict:_strict,allowed:_allowed.toList());
+  }
+  Future<void> _changeMode(bool strict) async {
+    setState(()=>_strict=strict);
+    if (!strict || kIsWeb || _installed.isNotEmpty) return;
+    const channel=MethodChannel('focus_echo/session');
+    final apps=await channel.invokeMapMethod<String,String>('listLaunchableApps');
+    if(mounted && apps!=null) setState(()=>_installed=apps);
+  }
   bool _isRefining = false;
   DateTime? _lastRefineTap;
   String? _refineFeedback;
@@ -584,6 +619,74 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  OutlinedButton.icon(
+                      icon: const Icon(Icons.calendar_month),
+                      label: const Text('Study planner'),
+                      onPressed: () async {
+                        final subject = await Navigator.push<String>(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const StudyPlanner()));
+                        if (!mounted || subject == null) return;
+                        vm.setIntent(subject);
+                        if (selectedApp != null) {
+                          await _start(selectedApp,subject);
+                        }
+                      }),
+                  SwitchListTile(
+                      secondary: const Icon(Icons.shield_outlined),
+                      title: const Text('Strict focus'),
+                      subtitle: Text(kIsWeb
+                          ? 'Allow only selected websites'
+                          : 'Choose the apps you need. Essential phone services stay available.'),
+                      value: _strict,
+                      onChanged: _changeMode),
+                  if (!kIsWeb)
+                    TextButton.icon(
+                        icon: const Icon(Icons.hourglass_top),
+                        label:
+                            const Text('Enable pause screen over other apps'),
+                        onPressed: () async {
+                          const channel = MethodChannel('focus_echo/session');
+                          if (await channel
+                                  .invokeMethod<bool>('overlayPermission') !=
+                              true) {
+                            await channel
+                                .invokeMethod<void>('openOverlayPermission');
+                          } else if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'Pause screen permission is enabled.')));
+                          }
+                        }),
+                  if (_strict && kIsWeb)
+                    TextFormField(initialValue:_allowed.join(", "),
+                        decoration: const InputDecoration(
+                            labelText: 'Allowed domains (comma separated)',
+                            prefixIcon: Icon(Icons.language)),
+                        onChanged: (v) {
+                          _allowed
+                            ..clear()
+                            ..addAll(v
+                                .split(',')
+                                .map((s) => s.trim().toLowerCase())
+                                .where((s) => s.isNotEmpty));
+                        }),
+                  if (_strict && !kIsWeb)
+                    Wrap(children: [
+                      for (final app in _installed.keys)
+                        FilterChip(
+                            label: Text(_installed[app] ?? app),
+                            selected: _allowed.contains(app),
+                            onSelected: (on) => setState(() {
+                                  if (on) {
+                                    _allowed.add(app);
+                                  } else {
+                                    _allowed.remove(app);
+                                  }
+                                }))
+                    ]),
                   // ── Header Badge & Title ─────────────────────────────────
                   Row(
                     children: [
@@ -931,10 +1034,7 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
                   // ── Section 4: Start Action Button ─────────────────────────
                   InkWell(
                     onTap: canStart
-                        ? () => vm.startSession(
-                              selectedApp!,
-                              intent: intent,
-                            )
+                        ? () => _start(selectedApp!,intent)
                         : null,
                     borderRadius: BorderRadius.circular(14),
                     child: AnimatedContainer(

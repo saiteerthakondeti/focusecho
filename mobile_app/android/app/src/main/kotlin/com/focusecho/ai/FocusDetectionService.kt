@@ -104,6 +104,64 @@ class FocusDetectionService : Service() {
         cachedSessionActive = prefs.getBoolean("flutter.session_active", false)
     }
 
+    private var gateView: android.view.View? = null
+    private fun closeGate() {
+        gateView?.let { runCatching { getSystemService(android.view.WindowManager::class.java).removeView(it) } }
+        gateView = null
+    }
+
+    private fun showGate(label: String, strict: Boolean) {
+        if (!android.provider.Settings.canDrawOverlays(this)) return
+        val panel = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(40,40,40,40)
+            setBackgroundColor(android.graphics.Color.rgb(20,29,45))
+        }
+        panel.addView(android.widget.TextView(this).apply {
+            text = if (strict) "$label is outside your allowed apps" else "Focus pause · $label"
+            textSize = 24f
+            setTextColor(android.graphics.Color.WHITE)
+        })
+        panel.addView(android.widget.Button(this).apply {
+            text = "Return to Focus"
+            setOnClickListener {
+                closeGate()
+                packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            }
+        })
+        if (strict) panel.addView(android.widget.Button(this).apply {
+            text = "End session"
+            setOnClickListener {
+                sendOrBuffer(JSONObject().put("eventType","intervention_action").put("action","end_session")
+                    .put("timestamp", Instant.now().toString()).toString())
+                closeGate()
+                packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            }
+        })
+        if (!strict) panel.addView(android.widget.Button(this).apply {
+            isEnabled = false
+            text = "Wait 10 seconds"
+            val button = this
+            val deadline = android.os.SystemClock.elapsedRealtime() + 10000
+            handler.post(object : Runnable {
+                override fun run() {
+                    if (gateView !== panel) return
+                    val left = deadline - android.os.SystemClock.elapsedRealtime()
+                    button.isEnabled = left <= 0
+                    button.text = if (left <= 0) "Continue" else "Wait ${(left + 999) / 1000}s"
+                    if (left > 0) handler.postDelayed(this, 250)
+                }
+            })
+            setOnClickListener { closeGate() }
+        })
+        val params = android.view.WindowManager.LayoutParams(-1,-1,
+            android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            android.graphics.PixelFormat.TRANSLUCENT)
+        if (runCatching { getSystemService(android.view.WindowManager::class.java).addView(panel,params) }.isSuccess) gateView = panel
+    }
+
     private fun detectForegroundApp() {
         if (!cachedSessionActive) return
 
@@ -114,8 +172,14 @@ class FocusDetectionService : Service() {
         // Check if this is a known distracting app and escalate accordingly
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         val distractingRaw = prefs.getString("flutter.distracting_apps", "[]") ?: "[]"
-        val isDistraction = distractingRaw.contains(packageName) ||
-            ALWAYS_DISTRACTION_PACKAGES.contains(packageName)
+        val strict = prefs.getBoolean("flutter.strict_focus", false)
+        val telecom = getSystemService(android.telecom.TelecomManager::class.java)
+        val home = packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),0)?.activityInfo?.packageName
+        val essential = packageName in setOf(this.packageName, home, telecom.defaultDialerPackage,
+            "com.android.systemui","com.android.phone","com.android.server.telecom","com.android.emergency","com.android.settings","com.google.android.dialer","com.android.incallui")
+        val allowed = org.json.JSONArray(prefs.getString("flutter.strict_allowed","[]") ?: "[]")
+        val isDistraction = !essential && if (strict) (0 until allowed.length()).none { allowed.optString(it) == packageName }
+            else distractingRaw.contains(packageName) || ALWAYS_DISTRACTION_PACKAGES.contains(packageName)
 
         if (packageName == lastForegroundPackage) {
             if (isDistraction) {
@@ -142,11 +206,13 @@ class FocusDetectionService : Service() {
 
         if (now - lastSwitchTimeMs < 500) return
         lastSwitchTimeMs = now
+        closeGate()
         lastForegroundPackage = packageName
 
         if (isDistraction) {
             continuousDistractionStartMs = now
             lastNudgeSentMs = now
+            showGate(label, strict)
             handleDistractionDetected(packageName, label, source = "usage_stats")
             return
         }
@@ -383,6 +449,7 @@ class FocusDetectionService : Service() {
     }
 
     override fun onDestroy() {
+        closeGate()
         handler.removeCallbacksAndMessages(null)
         clearDistractionNotifications()
         wakeLock = null

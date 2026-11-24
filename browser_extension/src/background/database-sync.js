@@ -311,7 +311,27 @@ async function broadcastCrossSurfaceIntervention(row, creds) {
  * @param {object|null} [activeSession]
  * @returns {Promise<{ synced: number, remaining: number, error?: string }>}
  */
-export async function syncEventQueue(activeSession = null) {
+let queueMutation = Promise.resolve();
+
+export function updateEventQueue(update) {
+  const operation = queueMutation.then(async () => {
+    const stored = await chrome.storage.local.get(SK.EVENT_QUEUE);
+    const next = update(stored[SK.EVENT_QUEUE] || []);
+    await chrome.storage.local.set({ [SK.EVENT_QUEUE]: next });
+    return next.length;
+  });
+  queueMutation = operation.catch(() => {});
+  return operation;
+}
+
+let pendingSync = Promise.resolve();
+export function syncEventQueue(activeSession = null) {
+  const operation = pendingSync.then(() => uploadEventQueue(activeSession));
+  pendingSync = operation.catch(() => {});
+  return operation;
+}
+
+async function uploadEventQueue(activeSession) {
   const queueData = await chrome.storage.local.get(SK.EVENT_QUEUE);
   const queue = queueData[SK.EVENT_QUEUE] || [];
   if (queue.length === 0) {
@@ -409,8 +429,10 @@ export async function syncEventQueue(activeSession = null) {
       await broadcastCrossSurfaceIntervention(latestDistraction, activeCreds);
     }
 
-    await chrome.storage.local.set({ [SK.EVENT_QUEUE]: [] });
-    return { synced: rows.length, remaining: 0 };
+    const uploaded = new Set(queue.map(entry => JSON.stringify(entry)));
+    const remaining = await updateEventQueue(current =>
+      current.filter(entry => !uploaded.has(JSON.stringify(entry))));
+    return { synced: rows.length, remaining };
   }
 
   return { synced: 0, remaining: queue.length, error: 'Database unreachable — queued for retry' };

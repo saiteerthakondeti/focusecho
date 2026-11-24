@@ -44,8 +44,6 @@ class _DistractionAlertModalState extends State<DistractionAlertModal>
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_seconds == 0) {
-        widget.onStreakPenalty();
-        if (mounted) Navigator.of(context).pop();
         timer.cancel();
         return;
       }
@@ -81,17 +79,21 @@ class _DistractionAlertModalState extends State<DistractionAlertModal>
             children: [
               ScaleTransition(
                 scale: Tween(begin: 1.0, end: 1.15).animate(
-                  CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+                  CurvedAnimation(
+                      parent: _pulseController, curve: Curves.easeInOut),
                 ),
-                child: const Icon(Icons.warning_rounded, size: 72, color: AppColors.accentRed),
+                child: const Icon(Icons.warning_rounded,
+                    size: 72, color: AppColors.accentRed),
               ),
               const SizedBox(height: 12),
               Text(
                 "Heads up — quick focus check",
-                style: AppTextStyles.displayMedium.copyWith(color: AppColors.accentRed),
+                style: AppTextStyles.displayMedium
+                    .copyWith(color: AppColors.accentRed),
               ),
               const SizedBox(height: 8),
-              Text('Still focused after ${widget.appName}?', style: AppTextStyles.bodyLarge),
+              Text('Still focused after ${widget.appName}?',
+                  style: AppTextStyles.bodyLarge),
               const SizedBox(height: 8),
               Chip(
                 backgroundColor: color.withValues(alpha: 0.25),
@@ -110,7 +112,8 @@ class _DistractionAlertModalState extends State<DistractionAlertModal>
                       color: AppColors.accentRed,
                     ),
                   ),
-                  Text('$_seconds', style: AppTextStyles.displayLarge.copyWith(fontSize: 48)),
+                  Text('$_seconds',
+                      style: AppTextStyles.displayLarge.copyWith(fontSize: 48)),
                 ],
               ),
               const SizedBox(height: 10),
@@ -147,13 +150,18 @@ class _DistractionAlertModalState extends State<DistractionAlertModal>
               SizedBox(
                 width: double.infinity,
                 child: TextButton(
-                  onPressed: () {
-                    widget.onSnooze();
-                    Navigator.of(context).pop();
-                  },
+                  onPressed: _seconds > 0
+                      ? null
+                      : () {
+                          widget.onSnooze();
+                          Navigator.of(context).pop();
+                        },
                   child: Text(
-                    'Snooze for 5 mins (Override)',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+                    _seconds > 0
+                        ? 'Wait ${_seconds}s'
+                        : 'Continue for 5 minutes',
+                    style:
+                        TextStyle(color: Colors.white.withValues(alpha: 0.7)),
                   ),
                 ),
               ),

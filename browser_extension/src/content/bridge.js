@@ -107,7 +107,9 @@ window.addEventListener('message', async (event) => {
         type: 'fe:start_session',
         session_id:       data.sessionId || crypto.randomUUID(),
         intention:        data.intention || 'Web Focus Session',
-        distraction_list: data.distractingSites || [],
+        strict: data.strict === true,
+          allowed: [...(Array.isArray(data.allowed) ? data.allowed : []), location.hostname],
+          distraction_list: data.distractingSites || [],
         user_id:          data.userId,
       }, (resp) => {
         window.postMessage({

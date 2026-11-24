@@ -8,6 +8,10 @@ import '../../core/theme/app_theme.dart';
 import '../../services/backend_analytics_service.dart';
 import '../focus_session/focus_session_viewmodel.dart';
 import 'analytics_viewmodel.dart';
+import '../focus_session/study_planner.dart';
+import '../../services/ai_coach_service.dart';
+import 'package:go_router/go_router.dart';
+import '../../core/constants/app_constants.dart';
 
 // AnalyticsScreen is a ConsumerStatefulWidget so it can use ref.listen
 // to detect when a focus session completes and immediately reload analytics
@@ -20,6 +24,8 @@ class AnalyticsScreen extends ConsumerStatefulWidget {
 }
 
 class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
+  late final Future<bool> _coachConsent = AiCoachService().getOptInStatus();
+  String _duration(int seconds) => '${seconds ~/ 60}m ${seconds % 60}s';
   static const _weekdayNames = [
     'Mon',
     'Tue',
@@ -125,6 +131,50 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                 const SizedBox(height: 12),
               ],
 
+              if (state.metrics case final m?) ...[
+                Card(
+                    child: ListTile(
+                        leading: const Icon(Icons.bar_chart),
+                        title: const Text('Distraction time'),
+                        subtitle: Text(
+                            m.hasDurations ? 'Today: ${_duration(m.today)} · Yesterday: ${_duration(m.yesterday)}\nYesterday by this time: ${_duration(m.previousAtThisTime)} · Change: ${m.today >= m.previousAtThisTime ? "+" : "−"}${_duration((m.today - m.previousAtThisTime).abs())}\nIncludes recorded distraction durations during focus sessions.' : 'No completed distraction durations recorded today or yesterday.'))),
+                FutureBuilder<bool>(
+                    future: _coachConsent,
+                    builder: (context, result) {
+                      if (result.data != true) return const SizedBox.shrink();
+                      final hour = m.hour;
+                      return Card(
+                          child: ListTile(
+                              leading: const Icon(Icons.lightbulb_outline),
+                              title: const Text('Study patterns'),
+                              subtitle: Text(hour == null
+                                  ? 'Keep logging sessions at different times to discover a pattern.'
+                                  : 'Across ${m.samples} sessions starting at ${TimeOfDay(hour: hour, minute: 0).format(context)}, you recorded less distraction time per hour. Try scheduling a study slot.'),
+                              trailing: hour == null
+                                  ? null
+                                  : IconButton(
+                                      tooltip: 'Add to planner',
+                                      icon: const Icon(Icons.calendar_month),
+                                      onPressed: () async {
+                                        final subject =
+                                            await Navigator.push<String>(
+                                                context,
+                                                MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        StudyPlanner(
+                                                            suggestedHour:
+                                                                hour)));
+                                        if (subject != null &&
+                                            context.mounted) {
+                                          ref
+                                              .read(
+                                                  focusSessionProvider.notifier)
+                                              .setIntent(subject);
+                                          context.push(AppRoutes.focusSession);
+                                        }
+                                      })));
+                    }),
+              ],
               // MOB-3g — Remote backend summary card (shows only when loaded)
               if (state.isRemoteLoaded) ...[
                 _RemoteSummaryCard(state: state),
@@ -150,7 +200,8 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                           enabled: true,
                           touchTooltipData: BarTouchTooltipData(
                             getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                              final day = dayLabels[group.x.toInt() % dayLabels.length];
+                              final day =
+                                  dayLabels[group.x.toInt() % dayLabels.length];
                               return BarTooltipItem(
                                 '$day: ${rod.toY.toInt()}m focus',
                                 AppTextStyles.bodySmall.copyWith(
@@ -261,7 +312,8 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                       touchTooltipData: LineTouchTooltipData(
                         getTooltipItems: (touchedSpots) {
                           return touchedSpots.map((spot) {
-                            final day = dayLabels[spot.x.toInt() % dayLabels.length];
+                            final day =
+                                dayLabels[spot.x.toInt() % dayLabels.length];
                             return LineTooltipItem(
                               '$day: ${spot.y.toInt()} distraction${spot.y.toInt() == 1 ? '' : 's'}',
                               AppTextStyles.bodySmall.copyWith(
@@ -912,7 +964,8 @@ class _RiskTrendSection extends StatelessWidget {
                       reservedSize: 24,
                       interval: 1,
                       getTitlesWidget: (value, meta) {
-                        if (value != value.roundToDouble() || value == meta.max) {
+                        if (value != value.roundToDouble() ||
+                            value == meta.max) {
                           return const SizedBox();
                         }
                         return Text(

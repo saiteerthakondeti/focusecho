@@ -15,6 +15,7 @@
   let hostElement = null;
   let shadowRoot = null;
   let countdownTimer = null;
+  let currentVisit = null;
   let emergencyHoldTimer = null;
 
   /**
@@ -116,7 +117,7 @@
   /**
    * Level 2: Friction Countdown Modal
    */
-  function showL2Modal(intention, countdownSeconds = 15) {
+  function showL2Modal(intention, countdownSeconds = 10) {
     hideOverlay();
     const shadow = getShadow();
     ensureStyles(shadow);
@@ -128,7 +129,7 @@
     backdrop.innerHTML = `
       <div class="fe-modal">
         <div class="fe-countdown-circle" id="fe-countdown-val">${remaining}</div>
-        <div class="fe-modal-title">Friction Check (Level 2)</div>
+        <div class="fe-modal-title">Focus pause</div>
         <div class="fe-modal-desc">
           Take a deep breath. You declared you would focus on:
         </div>
@@ -139,7 +140,7 @@
         <button class="fe-btn-secondary" id="fe-l2-continue-btn" disabled>
           Continue to site (wait ${remaining}s)
         </button>
-        <button class="fe-btn-secondary" id="fe-l2-allow-site-btn">Allow this site for this session</button>
+        <button class="fe-btn-secondary" id="fe-l2-allow-site-btn" disabled>Allow this site for this session</button>
       </div>
     `;
 
@@ -157,9 +158,10 @@
         countdownTimer = null;
         if (continueBtn) {
           continueBtn.disabled = false;
+          backdrop.querySelector('#fe-l2-allow-site-btn').disabled = false;
           continueBtn.textContent = 'Dismiss & Continue to site';
         }
-        sendToWorker('COUNTDOWN_EXPIRED');
+
       } else if (continueBtn) {
         continueBtn.textContent = `Continue to site (wait ${remaining}s)`;
       }
@@ -172,6 +174,7 @@
 
     continueBtn?.addEventListener('click', () => {
       if (!continueBtn.disabled) {
+        sendToWorker('COUNTDOWN_EXPIRED');
         hideOverlay();
       }
     });
@@ -184,7 +187,7 @@
   /**
    * Level 3: Full Screen Shield Blocker
    */
-  function showL3Blocker(intention) {
+  function showL3Blocker(intention, strict = false) {
     hideOverlay();
 
     // Immediately mute all playing video/audio on the page so Reels/YouTube
@@ -208,7 +211,7 @@
       <div class="fe-shield-icon">🛡️</div>
       <div class="fe-blocker-title">Site Blocked by FocusEcho</div>
       <p style="color: #9ca3af; font-size: 14px; max-width: 440px; text-align: center;">
-        You have reached Level 3 distraction escalation on this site.
+        ${strict ? 'This site is outside your session allowlist.' : 'You have reached Level 3 distraction escalation on this site.'}
       </p>
       <div class="fe-blocker-card">
         <div style="font-size: 11px; text-transform: uppercase; color: #60a5fa; letter-spacing: 1px; margin-bottom: 6px;">Your Declared Intention</div>
@@ -226,6 +229,13 @@
       </div>
     `;
 
+    if (strict) {
+      const end = document.createElement('button');
+      end.className = 'fe-btn-secondary';
+      end.textContent = 'End session';
+      end.onclick = () => { sendToWorker('USER_END_SESSION'); hideOverlay(); };
+      screen.querySelector('.fe-emergency-wrap').replaceWith(end);
+    }
     shadow.appendChild(screen);
 
     screen.querySelector('#fe-l3-return-btn')?.addEventListener('click', () => {
@@ -374,10 +384,13 @@
     if (message.type === 'fe:show_overlay') {
       const level = message.level || 1;
       const intention = message.intention || '';
-      if (level === 1) {
-        showL1Toast(intention);
-      } else if (level === 2) {
-        showL2Modal(intention, 15);
+      if (message.strict) {
+        showL3Blocker(intention, true);
+      } else if (level <= 2) {
+        if (!message.visit || message.visit !== currentVisit || !shadowRoot?.querySelector('#fe-countdown-val')) {
+          currentVisit = message.visit;
+          showL2Modal(intention, 10);
+        }
       } else if (level >= 3) {
         showL3Blocker(intention);
       }

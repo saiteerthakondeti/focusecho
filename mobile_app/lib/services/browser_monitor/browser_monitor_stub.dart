@@ -11,11 +11,14 @@ class BrowserMonitor {
   Stream<bool> get connectionStatus => const Stream.empty();
   Stream<BrowserActivity> get activities => const Stream.empty();
   Map<String, dynamic>? get activeExtensionSession => null;
-  Stream<Map<String, dynamic>?> get activeSessionUpdates => const Stream.empty();
+  Stream<Map<String, dynamic>?> get activeSessionUpdates =>
+      const Stream.empty();
 
   Future<void> initialize() async {}
   Future<void> startSession(
     List<String> distractingSites, {
+    bool strict = false,
+    List<String> allowed = const [],
     String? sessionId,
     String? intention,
     String? userId,

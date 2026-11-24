@@ -38,6 +38,17 @@ class MainActivity : FlutterActivity() {
                                 .acknowledgeBufferedEvent(this, deliveryId),
                         )
                     }
+                    "listLaunchableApps" -> {
+                        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                        result.success(packageManager.queryIntentActivities(query, 0)
+                            .associate { it.activityInfo.packageName to it.loadLabel(packageManager).toString() })
+                    }
+                    "overlayPermission" -> result.success(android.provider.Settings.canDrawOverlays(this))
+                    "openOverlayPermission" -> {
+                        startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            android.net.Uri.parse("package:" + packageName)))
+                        result.success(null)
+                    }
                     "startSession" -> {
                         val intent = Intent(this, FocusDetectionService::class.java).apply {
                             action = FocusDetectionService.START_ACTION

@@ -24,7 +24,7 @@ import { markTabActive, markTabInactive, removeTab } from './tab-tracker.js';
 import { normalizeHost, isDistracting, isWebUrl } from '../shared/host-utils.js';
 import { mkDistractionEvent, mkRecoveryEvent, mkEmergencyExitEvent, mkAllowedSiteEvent } from '../shared/event-schema.js';
 import { defaultConfig } from '../shared/storage-schema.js';
-import { syncEventQueue, saveSyncCredentials } from './database-sync.js';
+import { syncEventQueue, updateEventQueue, saveSyncCredentials } from './database-sync.js';
 import { Logger } from '../shared/logger.js';
 import {
   showDistractionNotification,
@@ -187,14 +187,12 @@ async function loadConfig() {
 // Offline event queue (purge on sync or 7-day TTL; NOT on session end)
 // ---------------------------------------------------------------------------
 async function enqueueEvent(feEvent) {
-  const r = await chrome.storage.local.get(SK.EVENT_QUEUE);
-  const queue = r[SK.EVENT_QUEUE] ?? [];
-  queue.push({ event: feEvent, queued_at: Date.now() });
-  // Prune stale entries (7-day TTL) while we're here
-  const cutoff = Date.now() - QUEUE_TTL_MS;
-  const pruned = queue.filter(e => e.queued_at >= cutoff);
-  await chrome.storage.local.set({ [SK.EVENT_QUEUE]: pruned });
-  LOG.act(`queued event: ${feEvent.event_type} | queue size: ${pruned.length}`);
+  const queuedAt = Date.now();
+  const size = await updateEventQueue(queue => [
+    ...queue.filter(entry => entry.queued_at >= queuedAt - QUEUE_TTL_MS),
+    { event: feEvent, queued_at: queuedAt, queue_id: crypto.randomUUID() },
+  ]);
+  LOG.act(`queued event: ${feEvent.event_type} | queue size: ${size}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +373,8 @@ async function _executeAction(name, param, { session, distraction, event, now })
         session_id:           payload.session_id,
         intention:            payload.intention,
         started_at:           now,
+        strict: payload.strict === true,
+        allowed: payload.allowed || [],
         distraction_list:     payload.distraction_list,
         distraction_count:    0,
         parked_items:         [],
@@ -426,6 +426,7 @@ async function _executeAction(name, param, { session, distraction, event, now })
         // Show L3 overlay on the active tab immediately.
         await sendToActiveDistractionTab({
           type: MSG.SHOW_OVERLAY,
+          strict: session.strict,
           level: 3,
           intention: session.intention || 'Focus Session',
         });
@@ -476,6 +477,7 @@ async function _executeAction(name, param, { session, distraction, event, now })
       };
       await saveDistraction(d);
       scheduleGraceTimer(3000);
+      await sendToActiveDistractionTab({ type: MSG.SHOW_OVERLAY, level: 1, strict: session.strict, visit: now, intention: session.intention });
       LOG.act(`grace entry recorded for ${host} at ${new Date(now).toISOString()}`);
       break;
     }
@@ -635,7 +637,6 @@ async function _executeAction(name, param, { session, distraction, event, now })
         SK.LAST_PRODUCTIVE_TAB_ID,
       ]);
       const config = storedConfig?.[SK.CONFIG] ?? {};
-      const distractionList = session?.distraction_list ?? [];
       const origins = (config.dashboard_origins ?? [])
         .map(value => { try { return new URL(value).origin; } catch (_) { return null; } })
         .filter(Boolean);
@@ -647,7 +648,7 @@ async function _executeAction(name, param, { session, distraction, event, now })
         try {
           const t = await chrome.tabs.get(tabId);
           if (!t?.url || !isWebUrl(t.url)) return null;
-          if (isDistracting(normalizeHost(t.url), distractionList)) return null;
+          if (session && sessionDistracts(normalizeHost(t.url), session)) return null;
           if (origins.some(o => t.url.startsWith(o))) return null;
           return t;
         } catch (_) {
@@ -789,6 +790,7 @@ async function _executeAction(name, param, { session, distraction, event, now })
       LOG.act(`▶ SHOW_OVERLAY level ${level} | intention: "${session?.intention}"`);
       await sendToActiveDistractionTab({
         type: MSG.SHOW_OVERLAY,
+        strict: session?.strict, visit: distraction?.grace_entered_at,
         level,
         intention: session?.intention || 'Focus Session',
       });
@@ -946,6 +948,10 @@ async function _executeAction(name, param, { session, distraction, event, now })
  *            fires again when the real URL is committed.
  * Hostname only: path, query and hash are never read beyond this point.
  */
+function sessionDistracts(host, session) {
+  return session.strict ? !isDistracting(host, session.allowed || []) : isDistracting(host, session.distraction_list);
+}
+
 function describeTab(url) {
   if (!url) return { kind: 'unknown', host: '' };
   if (isWebUrl(url)) return { kind: 'web', host: normalizeHost(url) };
@@ -962,7 +968,7 @@ async function scanActiveTab() {
     if (!session?.active) return;
     const info = describeTab(tab.url);
     if (info.kind !== 'web') return;
-    const distracting = isDistracting(info.host, session.distraction_list);
+    const distracting = sessionDistracts(info.host, session);
     await markTabActive(tab.id, info.host, distracting);
     await dispatch({
       type: EV.TAB_ACTIVATED,
@@ -992,7 +998,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
       return;
     }
 
-    const distracting = isDistracting(info.host, session.distraction_list);
+    const distracting = sessionDistracts(info.host, session);
     await markTabActive(tabId, info.host, distracting);
     await dispatch({
       type: EV.TAB_ACTIVATED,
@@ -1063,7 +1069,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     });
     return;
   }
-  const distracting = isDistracting(host, session.distraction_list);
+  const distracting = sessionDistracts(host, session);
   await markTabActive(tabId, host, distracting);
   await dispatch({
     type: EV.TAB_NAVIGATED,
@@ -1094,7 +1100,7 @@ chrome.webNavigation.onHistoryStateUpdated.addListener(async ({ tabId, frameId, 
   if (!isActiveTab) return;
 
   // Hostname only — path discarded
-  const distracting = isDistracting(host, session.distraction_list);
+  const distracting = sessionDistracts(host, session);
   await markTabActive(tabId, host, distracting);
 
   await dispatch({
@@ -1126,7 +1132,7 @@ chrome.webNavigation.onCommitted.addListener(async ({ tabId, frameId, url, trans
 
   // Dedup: onUpdated fires ~simultaneously for the same navigation.
   if (_deduplicateNav(tabId, host)) { LOG.sw(`onCommitted dedup skip for ${host}`); return; }
-  const distracting = isDistracting(host, session.distraction_list);
+  const distracting = sessionDistracts(host, session);
 
   await dispatch({
     type: EV.TAB_NAVIGATED,
@@ -1208,6 +1214,8 @@ async function _handleMessage(message, sender) {
     await dispatch({
       type: EV.SESSION_STARTED,
       payload: {
+        strict: message.strict === true,
+        allowed: Array.isArray(message.allowed) ? message.allowed.filter(x=>typeof x === "string").map(normalizeHost).filter(Boolean) : [],
         intention: intention || 'Focus Session',
         distraction_list: sites,
         mode: 'focus',
@@ -1261,7 +1269,7 @@ async function _handleMessage(message, sender) {
     if (!session?.active) return { ok: false, error: 'no active session' };
     const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const host = normalizeHost(message.host || tabs[0]?.url || '');
-    if (!host || !isDistracting(host, session.distraction_list || [])) {
+    if (session.strict || !host || !isDistracting(host, session.distraction_list || [])) {
       return { ok: false, error: 'active tab is not a listed distraction site' };
     }
     await dispatch({ type: EV.ALLOW_SITE_FOR_SESSION, payload: { host } });
@@ -1272,7 +1280,7 @@ async function _handleMessage(message, sender) {
     const session = await loadSession();
     const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const host = normalizeHost(tabs[0]?.url || '');
-    return { ok: true, host, listed: Boolean(session?.active && host && isDistracting(host, session.distraction_list || [])) };
+    return { ok: true, host, listed: Boolean(session?.active && !session.strict && host && isDistracting(host, session.distraction_list || [])) };
   }
 
   // --- Manual cloud sync trigger ---

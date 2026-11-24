@@ -99,7 +99,7 @@ export const ESC = /** @type {const} */ ({
   L3_MIN:  4,
 
   /** Default L2 countdown (ms). Content script owns the visual timer. */
-  COUNTDOWN_MS:  15_000,
+  COUNTDOWN_MS:  10_000,
 
   /** Hold-to-escape duration (ms) */
   EMERGENCY_HOLD_MS:  2_000,

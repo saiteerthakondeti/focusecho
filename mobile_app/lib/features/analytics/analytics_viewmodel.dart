@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'study_metrics.dart';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -28,6 +29,7 @@ class RecoveryStats {
 
 class AnalyticsState {
   const AnalyticsState({
+    this.metrics,
     this.weeklyFocusMinutes = const [0, 0, 0, 0, 0, 0, 0],
     this.dailyDistractions = const [0, 0, 0, 0, 0, 0, 0],
     this.appDistribution = const {},
@@ -45,6 +47,7 @@ class AnalyticsState {
     this.isRemoteLoaded = false,
   });
 
+  final StudyMetrics? metrics;
   final List<double> weeklyFocusMinutes;
   final List<int> dailyDistractions;
   final Map<String, int> appDistribution;
@@ -63,6 +66,7 @@ class AnalyticsState {
   final bool isRemoteLoaded;
 
   AnalyticsState copyWith({
+    StudyMetrics? metrics,
     List<double>? weeklyFocusMinutes,
     List<int>? dailyDistractions,
     Map<String, int>? appDistribution,
@@ -79,6 +83,7 @@ class AnalyticsState {
     bool? isRemoteLoaded,
   }) {
     return AnalyticsState(
+      metrics: metrics ?? this.metrics,
       weeklyFocusMinutes: weeklyFocusMinutes ?? this.weeklyFocusMinutes,
       dailyDistractions: dailyDistractions ?? this.dailyDistractions,
       appDistribution: appDistribution ?? this.appDistribution,
@@ -106,6 +111,18 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
     this._backendAnalytics,
   ) : super(const AnalyticsState()) {
     loadAnalytics();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!state.isLoading) loadAnalytics();
+    });
+  }
+
+  late final Timer _refreshTimer;
+  int _generation = 0;
+
+  @override
+  void dispose() {
+    _refreshTimer.cancel();
+    super.dispose();
   }
 
   final FocusSessionDao _sessionDao;
@@ -143,7 +160,8 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
   }
 
   /// Unified fetch & merge of sessions from Supabase and local cache.
-  Future<List<FocusSession>> _loadUnifiedSessions() async {
+  Future<List<FocusSession>> _loadUnifiedSessions(
+      Set<String> unavailable) async {
     final cloudSessions = <FocusSession>[];
     try {
       // Use UTC so the cutoff matches Supabase's timestamptz storage,
@@ -163,6 +181,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       FELog.d('Analytics',
           'Cloud query: fetched ${cloudSessions.length} sessions (since $cutoff)');
     } catch (e) {
+      unavailable.add('sessions');
       FELog.w('Analytics',
           'Cloud session query failed (continuing with local cache): $e');
     }
@@ -195,7 +214,8 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
   }
 
   /// Unified fetch & merge of distraction events from Supabase and local cache.
-  Future<List<DistractionEvent>> _loadUnifiedEvents() async {
+  Future<List<DistractionEvent>> _loadUnifiedEvents(
+      Set<String> unavailable) async {
     final cloudEvents = <DistractionEvent>[];
     // UTC cutoff to match Supabase timestamptz
     final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 7));
@@ -212,6 +232,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       FELog.d('Analytics',
           'Cloud query: fetched ${cloudEvents.length} distraction events');
     } catch (e) {
+      unavailable.add('distractions');
       FELog.w('Analytics', 'Cloud event query failed: $e');
     }
 
@@ -236,9 +257,8 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       }
     }
 
-    final merged = eventMap.values
-        .where((e) => e.eventType == 'distraction')
-        .toList();
+    final merged =
+        eventMap.values.where((e) => e.eventType == 'distraction').toList();
     merged.sort((a, b) => b.triggeredAt.compareTo(a.triggeredAt));
     return merged;
   }
@@ -247,12 +267,15 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
   /// data in parallel. The remote call is best-effort — failure is logged and
   /// the screen stays fully functional with local data.
   Future<void> loadAnalytics() async {
-    state = state.copyWith(isLoading: true, errorMessage: null);
+    final generation = ++_generation;
+    final unavailable = <String>{};
+    state = state.copyWith(isLoading: true, errorMessage: state.errorMessage);
     FELog.i('Analytics', 'Starting loadAnalytics computation');
     try {
       // ── Bug 1: Unified Cloud + Local merge ──────────────────────────────
-      final sessions = await _loadUnifiedSessions();
-      final recentEvents = await _loadUnifiedEvents();
+      final sessions = await _loadUnifiedSessions(unavailable);
+      final recentEvents = await _loadUnifiedEvents(unavailable);
+      if (!mounted || generation != _generation) return;
 
       // ── Bug 2: Calendar-Midnight Normalization ──────────────────────────
       final now = DateTime.now();
@@ -302,11 +325,16 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
 
       // ── Bug 3: Take 10 most recent completed sessions, then reverse for left-to-right chronological order
       final completed = sessions
-          .where((s) => s.endTime != null || s.status == SessionStatus.completed)
+          .where(
+              (s) => s.endTime != null || s.status == SessionStatus.completed)
           .toList();
       final scoreSessions = completed.isNotEmpty ? completed : sessions;
 
       state = state.copyWith(
+        errorMessage: unavailable.isEmpty
+            ? null
+            : 'Could not load cloud ${unavailable.join(" and ")}. Showing available data. Pull to retry.',
+        metrics: StudyMetrics.calculate(recentEvents, sessions, now),
         weeklyFocusMinutes: weeklyFocus,
         dailyDistractions: dailyDistractions,
         appDistribution: appCount,
@@ -323,8 +351,9 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       );
 
       // ── Remote backend (MOB-3g) — fire-and-forget enrichment ─────────────
-      unawaited(_loadRemote());
+      unawaited(_loadRemote(generation));
     } catch (e, st) {
+      if (!mounted || generation != _generation) return;
       FELog.e('Analytics', 'Analytics load failed', e, st);
       state = state.copyWith(
         isLoading: false,
@@ -335,7 +364,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
 
   /// Fetches backend summary + risk-trend and merges into state.
   /// Runs after local data is already displayed; failure is silent.
-  Future<void> _loadRemote() async {
+  Future<void> _loadRemote(int generation) async {
     // Retrieve Supabase session JWT as the Bearer token for the FastAPI backend.
     final session = AppDependencies.supabaseService.currentSession;
     if (session == null) {
@@ -355,10 +384,12 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
         _backendAnalytics.fetchRiskTrend(userId),
       ]);
 
+      if (!mounted || generation != _generation) return;
       final summary = results[0] as AnalyticsSummary?;
       final riskTrend = (results[1] as List).cast<RiskDayEntry>();
 
       state = state.copyWith(
+        errorMessage: state.errorMessage,
         remoteFocusScoreAverage: summary?.focusScoreAverage,
         remoteWeeklySessions: summary?.weeklySessions,
         remoteTopApps: summary?.topDistractingApps ?? [],

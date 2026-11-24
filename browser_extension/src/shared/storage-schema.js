@@ -89,7 +89,7 @@
  * @property {number}  habit_mode.limit_minutes   - default 60
  * @property {number}  habit_mode.break_minutes   - default 5
  * @property {object}  escalation
- * @property {number}  escalation.countdown_ms        - default 15 000
+ * @property {number}  escalation.countdown_ms        - default 10 000
  * @property {number}  escalation.emergency_hold_ms   - default 2 000
  * @property {number}  escalation.post_expiry_ms      - default 60 000
  * @property {string[]} dashboard_origins - exact origins for the dashboard bridge content script
@@ -109,7 +109,7 @@ export function defaultConfig() {
     ],
     strict_focus_mode: false,
     habit_mode: { enabled: false, limit_minutes: 60, break_minutes: 5 },
-    escalation: { countdown_ms: 15_000, emergency_hold_ms: 2_000, post_expiry_ms: 60_000 },
+    escalation: { countdown_ms: 10_000, emergency_hold_ms: 2_000, post_expiry_ms: 60_000 },
     dashboard_origins: [
       'https://focusecho-app.vercel.app',
       'http://localhost:3000',

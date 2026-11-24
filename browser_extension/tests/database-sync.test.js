@@ -11,6 +11,7 @@ import {
   DEFAULT_SUPABASE_ANON_KEY,
   refreshAuthSession,
   syncEventQueue,
+  updateEventQueue,
 } from '../src/background/database-sync.js';
 
 console.log('\n--- FocusEcho Database Sync Tests ---\n');
@@ -184,6 +185,9 @@ globalThis.fetch = async (url, options) => {
   if (url.endsWith('/focus_sessions')) return { status: 201, ok: true };
   if (url.endsWith('/distraction_events')) {
     eventRequests += 1;
+    if (eventRequests === 2) {
+      await updateEventQueue(queue => [...queue, { event: { id: 'later-event' }, queued_at: Date.now() }]);
+    }
     eventAuthorization.push(options.headers.Authorization);
     return eventRequests === 1
       ? { status: 401, ok: false, text: async () => 'expired' }
@@ -193,7 +197,8 @@ globalThis.fetch = async (url, options) => {
 };
 const retried = await syncEventQueue();
 console.info = originalConsoleInfo;
-assert(retried.synced === 1, 'expired access token is refreshed and the failed write succeeds');
+assert(retried.synced === 1 && retried.remaining === 1 && queueStorage.fe_event_queue[0]?.event.id === 'later-event',
+  'retried upload succeeds and preserves the event queued during upload');
 assert(eventRequests === 2 && refreshRequests === 1, '401 causes one refresh and exactly one request retry');
 assert(eventAuthorization[0] === 'Bearer expired-access-token' && eventAuthorization[1] === 'Bearer new-access-token', 'retry uses refreshed bearer token');
 assert(apiKeyHeaders.every(value => value === DEFAULT_SUPABASE_ANON_KEY), 'anon key remains only in apikey header');

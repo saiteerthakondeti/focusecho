@@ -138,6 +138,9 @@ export function transition(currentState, event, ctx, now = Date.now()) {
     // ----------------------------------------------------------------
     case STATE.COUNTING_GRACE:
     // ----------------------------------------------------------------
+      if (type === EV.USER_BACK_TO_FOCUS) {
+        return { nextState: STATE.MONITORING, actions: ['HIDE_OVERLAY', 'NAVIGATE_BACK_TO_FOCUS', 'CLEAR_DISTRACTION', 'LOG_GRACE_IGNORED'] };
+      }
       // User left the site — evaluate grace
       if (_isSiteLeave(type, payload)) {
         const timeOnSite = now - (graceEnteredAt ?? now);

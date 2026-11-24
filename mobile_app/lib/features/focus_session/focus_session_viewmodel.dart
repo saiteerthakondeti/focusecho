@@ -332,7 +332,10 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     }
   }
 
-  Future<void> startSession(String productiveApp, {String intent = ''}) async {
+  Future<void> startSession(String productiveApp,
+      {String intent = '',
+      bool strict = false,
+      List<String> allowed = const []}) async {
     // Feature 1 — a session cannot start without a stated intent.
     final trimmedIntent = intent.trim();
     if (trimmedIntent.isEmpty) {
@@ -362,6 +365,9 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     _requestSync();
     // Persist the intent so the native layer can show it on full-screen
     // interventions (Feature 2).
+    await _prefs.setBool('strict_focus', strict);
+    await _prefs.setString(
+        'strict_allowed', jsonEncode({...allowed, productiveApp}.toList()));
     await _prefs.setString(AppKeys.sessionIntent, trimmedIntent);
     if (!kIsWeb) {
       await _sessionChannel.invokeMethod<void>('startSession');
@@ -375,6 +381,8 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
           _prefs.getString(AppKeys.webDistractingSites) ?? '[]'));
       await _browserMonitor.startSession(
         sessionSiteSnapshot,
+        strict: strict,
+        allowed: allowed,
         sessionId: session.id,
         intention: trimmedIntent,
         userId: userId,
@@ -1087,7 +1095,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     // succeeds; the native staging row is retained for retry on failure.
     await _interventionDao.insertEvent(event);
     if (eventType == 'intervention_action') {
-      if (action == 'pause_session') {
+      if (action == 'pause_session' || action == 'end_session') {
         await stopSession();
       } else if (action == 'return_to_focus') {
         state = state.copyWith(showAlert: false);

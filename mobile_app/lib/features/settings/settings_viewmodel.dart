@@ -227,6 +227,9 @@ class SettingsViewModel extends StateNotifier<SettingsState> {
         await AppDependencies.supabaseService.deleteCurrentUserData();
       }
       await DatabaseHelper.instance.clearAllUserData();
+      await _prefs.remove('study_slots_${currentUser?.id ?? "guest"}');
+      await _prefs.remove('strict_allowed');
+      await _prefs.remove('strict_focus');
       await _clearPrivacyDataFromPrefs();
       state = const SettingsState();
       return currentUser == null

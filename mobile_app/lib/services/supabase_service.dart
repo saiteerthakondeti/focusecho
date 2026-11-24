@@ -307,6 +307,11 @@ class SupabaseService {
       throw StateError('No signed-in user found.');
     }
 
+    try {
+      await client.from('study_slots').delete().eq('user_id', user.id);
+    } on PostgrestException catch (e) {
+      if (e.code != 'PGRST205' && e.code != '42P01') rethrow;
+    }
     String? targetUserId = user.id;
     final userById =
         await client.from('users').select('id').eq('id', user.id).maybeSingle();

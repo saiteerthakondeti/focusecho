@@ -177,6 +177,8 @@ class BrowserMonitor {
 
   Future<void> startSession(
     List<String> distractingSites, {
+    bool strict = false,
+    List<String> allowed = const [],
     String? sessionId,
     String? intention,
     String? userId,
@@ -191,6 +193,8 @@ class BrowserMonitor {
       'intention': intention,
       'userId': userId,
       'distractingSites': distractingSites,
+      'strict': strict,
+      'allowed': allowed,
     });
   }
 
