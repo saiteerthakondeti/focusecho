@@ -10,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webdriver import WebDriver
+from urllib.parse import urldefrag
 
 from automation.config.config import Config, SCREENSHOT_DIR
 from automation.models.test_result import TestCaseResult
@@ -47,7 +48,12 @@ def _navigation_specs():
 
 
 def _route_history(driver, width, height, origin, destination):
-    driver.set_window_size(width,height)
+    # Start a new document so earlier cases cannot supply history entries
+    # or pending hashchange events. Load the origin as a real deep link.
+    driver.get("about:blank")
+    driver.set_window_size(width, height)
+    driver.get(f"{urldefrag(Config.BASE_URL).url}#{origin}")
+    wait = WebDriverWait(driver, Config.DEFAULT_TIMEOUT, poll_frequency=0.1)
 
     def selected(section):
         return driver.execute_script("""
@@ -58,11 +64,11 @@ def _route_history(driver, width, height, origin, destination):
                 links.length === 1 && links[0].dataset.section === arguments[0];
         """, section)
 
-    for section in (origin, destination):
-        driver.execute_script("location.hash = arguments[0]",section)
-        WebDriverWait(driver,3,poll_frequency=0.03).until(lambda _: selected(section))
+    wait.until(lambda _: selected(origin), f"Initial route did not render: {origin}")
+    driver.execute_script("location.hash = arguments[0]", destination)
+    wait.until(lambda _: selected(destination), f"Destination did not render: {destination}")
     driver.back()
-    return WebDriverWait(driver,3,poll_frequency=0.03).until(lambda _: selected(origin))
+    return wait.until(lambda _: selected(origin), f"Back did not restore: {origin}")
 
 
 def _case_specs() -> list[dict]:
