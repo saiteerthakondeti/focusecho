@@ -405,6 +405,28 @@ def run_all_load_tests() -> list[LoadTestMetric]:
     results.append(res8)
     print(f"[{res8.status}] {res8.test_id}: {res8.name} — RPS: {res8.requests_per_sec}, P95: {res8.p95_ms}ms, Errors: {res8.error_count}")
 
+    # Scoring workload profiles: payload length, recovery distribution, and
+    # simultaneously active clients. Verify response semantics under load.
+    from itertools import product
+    for workers, size, period in product((1,2,3,4,5,6,8),(8,16,24,32,64,128,256),range(1,9)):
+        path = "/api/v1/scoring/session/load-profile"
+        events = [{"package_name":"video.test", "event_type":"distraction", "triggered_at":"2026-11-04T18:05:00Z",
+                   "is_recovered": index % period == 0, "recovery_time_seconds": 20}
+                  for index in range(size)]
+        expected_rate = round(sum(e["is_recovered"] for e in events)/size,2)
+        def score_request(client, _index):
+            response = client.post(path,json=events)
+            if response.status_code != 200:
+                return False
+            body = response.json()
+            return body["total_distractions"] == size and body["recovery_rate"] == expected_rate
+        metric = LoadTestMetric(f"LOAD-SCORE-{workers}-{size}-{period}",
+                                f"Score {size} events, one recovery every {period}, {workers} clients",
+                                path, workers, max(4, workers*2))
+        result = run_load_scenario(metric, score_request, p95_threshold_ms=LOCAL_API_P95_BUDGET_MS)
+        results.append(result)
+        print(f"[{result.status}] {result.test_id}: {result.name} — P95: {result.p95_ms}ms, Errors: {result.error_count}")
+
     app.dependency_overrides.clear()
 
     output_dir = PROJECT_ROOT / "test-results"

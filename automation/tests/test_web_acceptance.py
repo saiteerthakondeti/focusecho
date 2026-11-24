@@ -27,6 +27,44 @@ def _open_app(driver: WebDriver) -> None:
     )
 
 
+def _navigation_specs():
+    # Exercise fragment navigation and history restoration across phone, tablet
+    # and desktop layouts. Each case explicitly establishes its starting route.
+    from itertools import permutations
+    from functools import partial
+
+    sections = ("dashboard", "timer", "parking-lot", "analytics", "coach", "reflection")
+    for width, height in [(320,568),(360,640),(375,667),(390,844),(412,915),(568,320),
+                          (640,360),(768,1024),(820,1180),(1024,768),(1280,720),
+                          (1440,900),(1920,1080)]:
+        for origin, destination in permutations(sections, 2):
+            yield dict(id=f"WEB-HISTORY-{width}-{origin}-{destination}", module="Route history",
+                       name=f"Back restores {origin} after visiting {destination} at {width}×{height}",
+                       priority="Medium", preconditions="Static dashboard loaded",
+                       steps=["Set window size", "Open both fragments", "Use browser Back"],
+                       expected="Only the requested section and navigation item are active at each step.",
+                       check=partial(_route_history,width=width,height=height,origin=origin,destination=destination))
+
+
+def _route_history(driver, width, height, origin, destination):
+    driver.set_window_size(width,height)
+
+    def selected(section):
+        return driver.execute_script("""
+            const panels = document.querySelectorAll('.content-section.active');
+            const links = document.querySelectorAll('.nav-item.active');
+            return location.hash === '#' + arguments[0] && panels.length === 1 &&
+                panels[0].id === 'section-' + arguments[0] && panels[0].getClientRects().length > 0 &&
+                links.length === 1 && links[0].dataset.section === arguments[0];
+        """, section)
+
+    for section in (origin, destination):
+        driver.execute_script("location.hash = arguments[0]",section)
+        WebDriverWait(driver,3,poll_frequency=0.03).until(lambda _: selected(section))
+    driver.back()
+    return WebDriverWait(driver,3,poll_frequency=0.03).until(lambda _: selected(origin))
+
+
 def _case_specs() -> list[dict]:
     return [
         {
@@ -133,7 +171,7 @@ def _case_specs() -> list[dict]:
             "expected": "A validation error appears and the current profile identity is unchanged.",
             "check": lambda driver: _reject_invalid_profile_email(driver),
         },
-    ]
+    ] + list(_navigation_specs())
 
 
 def _navigate_to_timer(driver: WebDriver) -> bool:
@@ -277,7 +315,8 @@ def run_tests(driver: WebDriver) -> list[TestCaseResult]:
         )
         started = time.perf_counter()
         try:
-            _open_app(driver)
+            if spec["module"] != "Route history" or not results or results[-1].module != "Route history":
+                _open_app(driver)
             passed = spec["check"](driver)
             result.status = "Passed" if passed is True else "Failed"
             result.actual_result = "Expected behavior observed." if passed is True else "Expected behavior was not observed."

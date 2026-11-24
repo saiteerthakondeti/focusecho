@@ -16,6 +16,7 @@
  *   T8  RECOVERY classification  — classifyRecovery boundaries
  */
 
+import { isDistracting, normalizeHost } from '../src/shared/host-utils.js';
 import { transition, levelForCount, classifyRecovery } from '../src/background/state-machine.js';
 import { STATE, EV, ESC, GRACE, RECOVERY_ZONES } from '../src/shared/constants.js';
 
@@ -514,6 +515,20 @@ for (const state of [STATE.MONITORING, STATE.COUNTING_GRACE, STATE.COUNTING, STA
   assert(`allow-site ${state} emits no recovery`, !r.actions.some(a => a.startsWith('EMIT_RECOVERY_EVENT')));
 }
 
+// Host matching at exact, subdomain and suffix boundaries for common distraction lists.
+for (const domain of ['youtube.com','youtu.be','instagram.com','reddit.com','tiktok.com','facebook.com','x.com',
+                      'twitch.tv','netflix.com','discord.com','pinterest.com','snapchat.com','threads.net','tumblr.com']) {
+  for (const [host,expected] of [
+    [domain,true], ['www.'+domain,true], ['m.'+domain,true], ['a.b.'+domain,true],
+    [domain.toUpperCase(),true], ['https://'+domain+'/watch?ref=notes',true],
+    ['https://'+domain+':8443/',true], ['not'+domain,false], [domain+'.example',false],
+    ['https://notes.example/'+domain,false], ['https://notes.example/?site='+domain,false],
+    ['https://'+domain+'@notes.example/',false],
+  ]) assert('List '+domain+' classifies '+host,isDistracting(host,[domain])===expected);
+}
+for (const host of ['',null,'http://','https:///']) {
+  assert('Invalid hostname normalizes to empty: '+JSON.stringify(host), normalizeHost(host)==='');
+}
 console.log('\n╔══════════════════════════════════════════╗');
 console.log('║  FocusEcho SM Unit Tests — Phase 1      ║');
 console.log('╚══════════════════════════════════════════╝');

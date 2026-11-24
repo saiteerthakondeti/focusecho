@@ -297,8 +297,10 @@ def main():
     threshold = float(os.environ.get("PASS_THRESHOLD_PERCENT", "100"))
     pass_rate = passed_checks * 100 / total_checks
     missing_suites, empty_suites = required_suite_gaps(suites)
+    wrong_counts = [f"{s['name']} ({s['total']})" for s in suites if s["total"] != 400]
     gate = (
         pass_rate >= threshold
+        and not wrong_counts
         and total_failed == 0
         and total_skipped == 0
         and not missing_suites
@@ -346,6 +348,8 @@ def main():
     lines.append(f"**Test Cases Summary:** **{total_passed} passed**, **{total_failed} failed**, **{total_skipped} skipped** out of **{total_test_cases} total**.")
     if missing_suites:
         lines.append(f"**Missing required suite results:** {', '.join(missing_suites)}")
+    if wrong_counts:
+        lines.append(f"**Expected 400 cases per suite:** {', '.join(wrong_counts)}")
     if empty_suites:
         lines.append(f"**Empty required suite results:** {', '.join(empty_suites)}")
 

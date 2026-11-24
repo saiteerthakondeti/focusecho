@@ -47,7 +47,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          python -m pytest automation/test_quality_controls.py automation/tests/test_full_suite_report.py -q --junitxml=test-results/qa-quality-junit.xml 2>&1 | tee test-results/qa-quality.log
+          python -m pytest automation/test_quality_controls.py automation/tests/test_full_suite_report.py automation/tests/test_reconciliation_matrix.py -q --junitxml=test-results/qa-quality-junit.xml 2>&1 | tee test-results/qa-quality.log
 
       - name: Run Selenium acceptance tests on local static web app
         id: selenium
