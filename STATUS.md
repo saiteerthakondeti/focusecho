@@ -1,10 +1,23 @@
 # FocusEcho — Project Status Tracker
 
-> **Last Updated:** 2026-10-27
+> **Last Updated:** 2026-11-25
 > **Status Taxonomy:** `done and verified` | `written but unverified` | `failed` | `not started`
 > *(Note: "Verified" means seen working on a real physical phone or in a live Chrome browser instance, not just passing unit tests.)*
 
 ---
+
+### Hosted extension analytics verification · 2026-11-25
+
+**Passed** with the unpacked extension in Chrome for Testing and the Flutter web
+dashboard served on localhost against hosted Supabase. The test account began
+with an empty chart. Visiting `example.org` generated event
+`3dbbb9f8-98a2-4e7e-a063-0ef958bfeafe`. The authenticated database query and
+the Analytics page's network response both returned that ID, and Analytics
+rendered `example.org`. The deployed Vercel dashboard remains unverified.
+
+To repeat with a web build configured for a test project that permits anonymous
+sign-in, run `node browser_extension/tests/hosted-analytics-smoke.mjs` from the
+repository root. This standalone check creates a hosted test account and session.
 
 ## 📊 Phase-by-Phase Status Matrix
 
