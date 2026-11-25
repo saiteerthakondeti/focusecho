@@ -45,7 +45,9 @@ Changed the CI catalogue size rule to accept **400–410 cases per suite** while
 keeping the 100% workflow threshold and zero-failure/zero-skip requirements.
 This accommodates the 401 Flutter and 402 extension tests without removing
 passing checks. Added range-boundary and full-report regression coverage.
-Local QA quality controls: **17 passed**. GitHub CI for this change is pending.
+Local QA quality controls: **17 passed**. GitHub CI for fix commit `0c6773c`
+passed, including the main test gate and debug APK workflow. GitHub uploaded the
+`focusecho-test-results` and `focusecho-debug-apk` artifacts.
 
 To repeat with a web build configured for a test project that permits anonymous
 sign-in, run `node browser_extension/tests/hosted-analytics-smoke.mjs` from the
