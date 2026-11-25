@@ -42,7 +42,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     final now = DateTime.now();
     final todayMidnight = DateTime(now.year, now.month, now.day);
     return List.generate(7, (i) {
-      final d = todayMidnight.subtract(Duration(days: 6 - i));
+      final d = DateTime(now.year, now.month, todayMidnight.day - 6 + i);
       return _weekdayNames[d.weekday - 1];
     });
   }

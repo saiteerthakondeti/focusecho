@@ -225,7 +225,7 @@ export function formatQueuedEventRows(queue, activeSession) {
  * @param {object} session
  * @param {object} creds
  */
-async function ensureFocusSessionInCloud(session, creds) {
+async function ensureFocusSessionInCloud(session, creds, insertOnly = false) {
   if (!session?.session_id) return creds;
   let activeCreds = creds;
   const { supabaseUrl, supabaseAnonKey, userId } = activeCreds;
@@ -256,7 +256,7 @@ async function ensureFocusSessionInCloud(session, creds) {
       headers: {
         'apikey':        supabaseAnonKey,
         'Content-Type':  'application/json',
-        'Prefer':        'resolution=merge-duplicates',
+        'Prefer':        insertOnly ? 'resolution=ignore-duplicates' : 'resolution=merge-duplicates',
       },
       body: JSON.stringify(sessionRow),
     }, activeCreds);
@@ -354,17 +354,23 @@ async function uploadEventQueue(activeSession) {
   // 1. Ensure active focus_session exists in DB first
   if (activeSession) {
     activeCreds = await ensureFocusSessionInCloud(activeSession, activeCreds) || activeCreds;
-  } else if (queue.length > 0) {
-    const firstEv = queue[0].event || queue[0];
-    if (firstEv.session_id) {
-      activeCreds = await ensureFocusSessionInCloud({
-        session_id: firstEv.session_id,
-        started_at: firstEv.distraction_started_at || firstEv.timestamp,
-        active: false,
-        intention: 'Web Focus Session',
-        distraction_count: queue.length,
-      }, activeCreds) || activeCreds;
-    }
+  }
+  // Offline events can outlive the active session. Ensure every older
+  // parent exists without replacing an existing session with inferred data.
+  const queuedSessions = new Map();
+  for (const item of queue) {
+    const ev = item.event || item;
+    if (!ev.session_id || ev.session_id === activeSession?.session_id) continue;
+    const parent = queuedSessions.get(ev.session_id) || {
+      session_id: ev.session_id, started_at: ev.distraction_started_at || ev.timestamp,
+      active: false, intention: 'Web Focus Session', distraction_count: 0,
+    };
+    if (ev.event_type === 'distraction') parent.distraction_count++;
+    parent.ended_at = ev.timestamp || parent.started_at;
+    queuedSessions.set(ev.session_id, parent);
+  }
+  for (const parent of queuedSessions.values()) {
+    activeCreds = await ensureFocusSessionInCloud(parent, activeCreds, true) || activeCreds;
   }
 
   // 2. Prepare payload rows. The deployed migrations include escalation_level,

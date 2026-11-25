@@ -108,8 +108,9 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
   AnalyticsViewModel(
     this._sessionDao,
     this._eventDao,
-    this._backendAnalytics,
-  ) : super(const AnalyticsState()) {
+    this._backendAnalytics, {
+    SupabaseClient? cloudClient,
+  }) : _cloudClient = cloudClient, super(const AnalyticsState()) {
     loadAnalytics();
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!state.isLoading) loadAnalytics();
@@ -128,6 +129,8 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
   final FocusSessionDao _sessionDao;
   final DistractionEventDao _eventDao;
   final BackendAnalyticsService _backendAnalytics;
+  final SupabaseClient? _cloudClient;
+  SupabaseClient get _cloud => _cloudClient ?? Supabase.instance.client;
 
   /// Primary Recovery Rate definition: % of distractions recovered < 30s.
   static const int _fastRecoveryThresholdSeconds = 30;
@@ -171,7 +174,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
           .toUtc()
           .subtract(const Duration(days: 7))
           .toIso8601String();
-      final rows = await Supabase.instance.client
+      final rows = await _cloud
           .from('focus_sessions')
           .select()
           .gte('start_time', cutoff)
@@ -220,7 +223,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
     // UTC cutoff to match Supabase timestamptz
     final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 7));
     try {
-      final rows = await Supabase.instance.client
+      final rows = await _cloud
           .from('distraction_events')
           .select()
           .gte('triggered_at', cutoff.toIso8601String())
@@ -279,14 +282,19 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
 
       // ── Bug 2: Calendar-Midnight Normalization ──────────────────────────
       final now = DateTime.now();
-      final todayMidnight = DateTime(now.year, now.month, now.day);
+      // Calendar-day distance must use the device's dates, including on
+      // days with a daylight-saving change. Cloud timestamps arrive in UTC.
+      DateTime dayKey(DateTime instant) {
+        final local = instant.toLocal();
+        return DateTime.utc(local.year, local.month, local.day);
+      }
+      final todayMidnight = dayKey(now);
       final weeklyFocus = List<double>.filled(7, 0);
       final dailyDistractions = List<int>.filled(7, 0);
       final appCount = <String, int>{};
 
       for (final s in sessions) {
-        final itemMidnight =
-            DateTime(s.startTime.year, s.startTime.month, s.startTime.day);
+        final itemMidnight = dayKey(s.startTime);
         final daysAgo = todayMidnight.difference(itemMidnight).inDays;
         final dayIndex = 6 - daysAgo;
         if (dayIndex >= 0 && dayIndex < 7) {
@@ -296,8 +304,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       }
 
       for (final e in recentEvents) {
-        final itemMidnight = DateTime(
-            e.triggeredAt.year, e.triggeredAt.month, e.triggeredAt.day);
+        final itemMidnight = dayKey(e.triggeredAt);
         final daysAgo = todayMidnight.difference(itemMidnight).inDays;
         final dayIndex = 6 - daysAgo;
         if (dayIndex >= 0 && dayIndex < 7) {
