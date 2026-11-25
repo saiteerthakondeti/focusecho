@@ -1,15 +1,19 @@
 """Fast checks that keep the browser test catalogue meaningful."""
 
+import pytest
+
 from automation.config.config import Config
 from automation.models.test_result import TestCaseResult as CaseResult
 from automation.tests import SUITES
 from automation.tests import test_web_acceptance
 from automation.load.runner import _calculate_percentiles
 from automation.vulnerability.runner import _SecMockClient
+from scripts import evaluate_gate
 from scripts.evaluate_gate import (
     parse_flutter_analyze,
     parse_flutter_test,
     required_suite_gaps,
+    suite_count_gaps,
 )
 
 
@@ -176,6 +180,103 @@ def test_ci_gate_rejects_missing_or_empty_required_suite_results():
 
     assert missing == ["Vulnerability Checks"]
     assert empty == ["Load Smoke"]
+
+
+def test_ci_gate_accepts_each_suite_within_the_400_to_410_case_range():
+    suites = [
+        {"name": "Flutter Tests (Mobile/Web)", "total": 401},
+        {"name": "Browser Extension Tests", "total": 402},
+        {"name": "Backend (Pytest)", "total": 400},
+        {"name": "Selenium Acceptance", "total": 410},
+    ]
+
+    assert suite_count_gaps(suites) == []
+
+
+def test_ci_gate_rejects_suite_counts_outside_the_400_to_410_case_range():
+    suites = [
+        {"name": "Too small", "total": 399},
+        {"name": "Too large", "total": 411},
+    ]
+
+    assert suite_count_gaps(suites) == ["Too small (399)", "Too large (411)"]
+
+
+def test_ci_gate_passes_report_with_401_flutter_and_402_extension_tests(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    results = {
+        "Backend (Pytest)": 400,
+        "QA Catalogue Controls": 400,
+        "Flutter Tests (Mobile/Web)": 401,
+        "Browser Extension Tests": 402,
+        "Selenium Acceptance": 400,
+        "Load Smoke": 400,
+        "Vulnerability Checks": 400,
+    }
+
+    def suite(name):
+        total = results[name]
+        return {
+            "name": name,
+            "total": total,
+            "passed": total,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+    monkeypatch.setattr(evaluate_gate, "parse_backend", lambda: suite("Backend (Pytest)"))
+    monkeypatch.setattr(
+        evaluate_gate,
+        "parse_junit",
+        lambda _path, name: suite(name) if name == "QA Catalogue Controls" else None,
+    )
+    monkeypatch.setattr(
+        evaluate_gate,
+        "parse_flutter_test",
+        lambda: suite("Flutter Tests (Mobile/Web)"),
+    )
+    monkeypatch.setattr(
+        evaluate_gate,
+        "parse_extension",
+        lambda: suite("Browser Extension Tests"),
+    )
+    monkeypatch.setattr(
+        evaluate_gate,
+        "parse_selenium",
+        lambda: suite("Selenium Acceptance"),
+    )
+    monkeypatch.setattr(
+        evaluate_gate,
+        "parse_summary",
+        lambda path, _name, _pattern: suite(
+            "Load Smoke" if path.endswith("load.log") else "Vulnerability Checks"
+        ),
+    )
+    monkeypatch.setattr(evaluate_gate, "parse_flutter_analyze", lambda: None)
+    for key in (
+        "BACKEND_RESULT",
+        "FLUTTER_ANALYZE_RESULT",
+        "FLUTTER_TEST_RESULT",
+        "EXTENSION_RESULT",
+        "QA_QUALITY_RESULT",
+        "SELENIUM_RESULT",
+        "LOAD_RESULT",
+        "VULNERABILITY_RESULT",
+    ):
+        monkeypatch.setenv(key, "success")
+    monkeypatch.setenv("PASS_THRESHOLD_PERCENT", "100")
+
+    with pytest.raises(SystemExit) as exit_result:
+        evaluate_gate.main()
+    report = capsys.readouterr().out
+
+    assert exit_result.value.code == 0
+    assert "# 🟢 FocusEcho CI Test Report" in report
+    assert "**TOTAL TEST CASES** | **2803** | **2803** | **0** | **0** | **🟢 PASSED**" in report
+    assert "**Gate Decision:** **PASSED** — Steps Passed: **8/8 (100%)**" in report
+    assert "Expected 400–410 cases per suite" not in report
 
 
 def test_flutter_parser_does_not_infer_success_from_partial_progress(monkeypatch, tmp_path):

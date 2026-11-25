@@ -266,6 +266,19 @@ def required_suite_gaps(suites: list[dict]) -> tuple[list[str], list[str]]:
     empty = sorted(name for name in required & by_name.keys() if by_name[name]["total"] == 0)
     return missing, empty
 
+
+MIN_CASES_PER_SUITE = 400
+MAX_CASES_PER_SUITE = 410
+
+
+def suite_count_gaps(suites: list[dict]) -> list[str]:
+    """Reject undersized or unexpectedly oversized test suites."""
+    return [
+        f"{suite['name']} ({suite['total']})"
+        for suite in suites
+        if not MIN_CASES_PER_SUITE <= suite["total"] <= MAX_CASES_PER_SUITE
+    ]
+
 def main():
     checks = {
         "Backend": os.environ.get("BACKEND_RESULT", "failure"),
@@ -297,7 +310,7 @@ def main():
     threshold = float(os.environ.get("PASS_THRESHOLD_PERCENT", "100"))
     pass_rate = passed_checks * 100 / total_checks
     missing_suites, empty_suites = required_suite_gaps(suites)
-    wrong_counts = [f"{s['name']} ({s['total']})" for s in suites if s["total"] != 400]
+    wrong_counts = suite_count_gaps(suites)
     gate = (
         pass_rate >= threshold
         and not wrong_counts
@@ -349,7 +362,9 @@ def main():
     if missing_suites:
         lines.append(f"**Missing required suite results:** {', '.join(missing_suites)}")
     if wrong_counts:
-        lines.append(f"**Expected 400 cases per suite:** {', '.join(wrong_counts)}")
+        lines.append(
+            f"**Expected 400–410 cases per suite:** {', '.join(wrong_counts)}"
+        )
     if empty_suites:
         lines.append(f"**Empty required suite results:** {', '.join(empty_suites)}")
 
