@@ -199,39 +199,45 @@ class MainShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final index = _currentIndex(context);
+    final showBottomNavigation = MediaQuery.sizeOf(context).width < 1180;
     return Scaffold(
       body: child,
       appBar: FocusWorkspaceAppBar(activePath: _tabs[index]),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        height: 68,
-        backgroundColor: const Color(0xff0c1a2c),
-        indicatorColor: AppColors.accentBlue.withValues(alpha: 0.15),
-        onDestinationSelected: (i) => context.go(_tabs[i]),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded, color: AppColors.accentBlue),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart, color: AppColors.accentBlue),
-            label: 'Analytics',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.local_fire_department_outlined),
-            selectedIcon: Icon(Icons.local_fire_department,
-                color: AppColors.accentYellow),
-            label: 'Streaks',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings, color: AppColors.accentBlue),
-            label: 'Settings',
-          ),
-        ],
-      ),
+      bottomNavigationBar: showBottomNavigation
+          ? NavigationBar(
+              selectedIndex: index,
+              height: 68,
+              backgroundColor: const Color(0xff0c1a2c),
+              indicatorColor: AppColors.accentBlue.withValues(alpha: 0.15),
+              onDestinationSelected: (i) => context.go(_tabs[i]),
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon:
+                      Icon(Icons.home_rounded, color: AppColors.accentBlue),
+                  label: 'Home',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.bar_chart_outlined),
+                  selectedIcon:
+                      Icon(Icons.bar_chart, color: AppColors.accentBlue),
+                  label: 'Analytics',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.local_fire_department_outlined),
+                  selectedIcon: Icon(Icons.local_fire_department,
+                      color: AppColors.accentYellow),
+                  label: 'Streaks',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon:
+                      Icon(Icons.settings, color: AppColors.accentBlue),
+                  label: 'Settings',
+                ),
+              ],
+            )
+          : null,
     );
   }
 }
