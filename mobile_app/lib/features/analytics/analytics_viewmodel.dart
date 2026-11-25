@@ -30,6 +30,8 @@ class RecoveryStats {
 class AnalyticsState {
   const AnalyticsState({
     this.metrics,
+    this.sessions = const [],
+    this.events = const [],
     this.weeklyFocusMinutes = const [0, 0, 0, 0, 0, 0, 0],
     this.dailyDistractions = const [0, 0, 0, 0, 0, 0, 0],
     this.appDistribution = const {},
@@ -47,6 +49,8 @@ class AnalyticsState {
     this.isRemoteLoaded = false,
   });
 
+  final List<FocusSession> sessions;
+  final List<DistractionEvent> events;
   final StudyMetrics? metrics;
   final List<double> weeklyFocusMinutes;
   final List<int> dailyDistractions;
@@ -67,6 +71,8 @@ class AnalyticsState {
 
   AnalyticsState copyWith({
     StudyMetrics? metrics,
+    List<FocusSession>? sessions,
+    List<DistractionEvent>? events,
     List<double>? weeklyFocusMinutes,
     List<int>? dailyDistractions,
     Map<String, int>? appDistribution,
@@ -84,6 +90,8 @@ class AnalyticsState {
   }) {
     return AnalyticsState(
       metrics: metrics ?? this.metrics,
+      sessions: sessions ?? this.sessions,
+      events: events ?? this.events,
       weeklyFocusMinutes: weeklyFocusMinutes ?? this.weeklyFocusMinutes,
       dailyDistractions: dailyDistractions ?? this.dailyDistractions,
       appDistribution: appDistribution ?? this.appDistribution,
@@ -94,8 +102,7 @@ class AnalyticsState {
       recoveryRateTrend: recoveryRateTrend ?? this.recoveryRateTrend,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage,
-      summaryAverageScore:
-          summaryAverageScore ?? this.summaryAverageScore,
+      summaryAverageScore: summaryAverageScore ?? this.summaryAverageScore,
       summarySessionCount: summarySessionCount ?? this.summarySessionCount,
       remoteTopApps: remoteTopApps ?? this.remoteTopApps,
       remoteRiskTrend: remoteRiskTrend ?? this.remoteRiskTrend,
@@ -110,7 +117,8 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
     this._eventDao,
     this._backendAnalytics, {
     SupabaseClient? cloudClient,
-  }) : _cloudClient = cloudClient, super(const AnalyticsState()) {
+  })  : _cloudClient = cloudClient,
+        super(const AnalyticsState()) {
     loadAnalytics();
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (!state.isLoading) loadAnalytics();
@@ -172,7 +180,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       // being silently dropped by an off-by-hours comparison.
       final cutoff = DateTime.now()
           .toUtc()
-          .subtract(const Duration(days: 7))
+          .subtract(const Duration(days: 31))
           .toIso8601String();
       final rows = await _cloud
           .from('focus_sessions')
@@ -221,7 +229,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       Set<String> unavailable) async {
     final cloudEvents = <DistractionEvent>[];
     // UTC cutoff to match Supabase timestamptz
-    final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 7));
+    final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 31));
     try {
       final rows = await _cloud
           .from('distraction_events')
@@ -288,6 +296,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
         final local = instant.toLocal();
         return DateTime.utc(local.year, local.month, local.day);
       }
+
       final todayMidnight = dayKey(now);
       final weeklyFocus = List<double>.filled(7, 0);
       final dailyDistractions = List<int>.filled(7, 0);
@@ -310,6 +319,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
         if (dayIndex >= 0 && dayIndex < 7) {
           dailyDistractions[dayIndex] += 1;
         }
+        if (dayIndex < 0 || dayIndex >= 7) continue;
         final label = e.appLabel.isNotEmpty ? e.appLabel : e.packageName;
         appCount[label] = (appCount[label] ?? 0) + 1;
       }
@@ -343,7 +353,13 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
             : 'Could not load cloud ${unavailable.join(" and ")}. Showing available data. Pull to retry.',
         isRemoteLoaded: false,
         summarySessionCount: completed.length,
-        summaryAverageScore: completed.isEmpty ? 0 : completed.fold<double>(0, (sum, session) => sum + session.focusScore) / completed.length,
+        summaryAverageScore: completed.isEmpty
+            ? 0
+            : completed.fold<double>(
+                    0, (sum, session) => sum + session.focusScore) /
+                completed.length,
+        sessions: sessions,
+        events: recentEvents,
         metrics: StudyMetrics.calculate(recentEvents, sessions, now),
         weeklyFocusMinutes: weeklyFocus,
         dailyDistractions: dailyDistractions,

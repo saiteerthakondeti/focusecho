@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -120,8 +121,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                   CurvedAnimation(
                       parent: _controller, curve: const Interval(0.25, 0.5)),
                 ),
-                child: const Icon(Icons.graphic_eq_rounded,
-                    size: 80, color: AppColors.accentBlue),
+                child: const FocusEchoLogo(size: 64),
               ),
             ),
             const SizedBox(height: 16),

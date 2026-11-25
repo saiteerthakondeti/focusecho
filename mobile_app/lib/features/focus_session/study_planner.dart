@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -140,7 +141,7 @@ class _StudyPlannerState extends State<StudyPlanner> {
     final visible = slots.where((r) => r['deleted'] != true).toList()
       ..sort((a, b) => a['starts_at'].compareTo(b['starts_at']) as int);
     return Scaffold(
-        appBar: AppBar(title: const Text('Study planner')),
+        appBar: AppBar(actions:const [Padding(padding:EdgeInsets.symmetric(horizontal:12),child:FocusEchoLogo())],title: const Text('Study planner')),
         floatingActionButton: FloatingActionButton.extended(
             onPressed: busy ? null : () => edit(),
             icon: const Icon(Icons.calendar_month),

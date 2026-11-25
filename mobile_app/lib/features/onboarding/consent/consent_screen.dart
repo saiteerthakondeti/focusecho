@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -27,7 +28,7 @@ class ConsentScreen extends ConsumerWidget {
                 child: Column(
                   children: [
                     const SizedBox(height: AppSpacing.md),
-                    const Icon(Icons.graphic_eq_rounded, color: AppColors.accentBlue, size: 72),
+                    const FocusEchoLogo(size: 64),
                     const SizedBox(height: AppSpacing.md),
                     Text(
                       AppStrings.appName,

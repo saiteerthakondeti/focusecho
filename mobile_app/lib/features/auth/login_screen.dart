@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -521,7 +522,7 @@ class _BrandHeader extends StatelessWidget {
               ),
             ],
           ),
-          child: const Icon(Icons.bolt_rounded, size: 38, color: Colors.white),
+          child: const FocusEchoLogo(size: 64),
         ),
         const SizedBox(height: 16),
         Text(

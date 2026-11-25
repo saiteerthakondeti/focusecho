@@ -13,38 +13,16 @@ class StudyMetrics {
     final yesterday = DateTime(now.year, now.month, now.day - 1);
     final priorCutoff = DateTime(
         now.year, now.month, now.day - 1, now.hour, now.minute, now.second);
-    final intervals = <({DateTime start, DateTime end})>[];
-    for (final e in events) {
-      final start = e.triggeredAt.toLocal();
-      final seconds = e.timeAwaySeconds ?? e.recoveryTimeSeconds;
-      final end = e.recoveredAt?.toLocal() ??
-          (seconds == null ? null : start.add(Duration(seconds: seconds)));
-      if (end != null && end.isAfter(start)) {
-        intervals.add((start: start, end: end));
-      }
-    }
-    intervals.sort((a, b) => a.start.compareTo(b.start));
-    int elapsed(DateTime from, DateTime until) {
-      var cursor = from;
-      var seconds = 0;
-      for (final span in intervals) {
-        final start = span.start.isAfter(cursor) ? span.start : cursor;
-        final end = span.end.isBefore(until) ? span.end : until;
-        if (end.isAfter(start)) {
-          seconds += end.difference(start).inSeconds;
-          cursor = end;
-        }
-      }
-      return seconds;
-    }
-
+    final elapsed = recordedDuration(events);
     final groups = <int, ({int count, int seconds, int drift})>{};
     for (final s in sessions) {
       final start = s.startTime.toLocal(), end = s.endTime?.toLocal();
       if (s.status != SessionStatus.completed ||
           end == null ||
           end.isAfter(now) ||
-          start.isBefore(now.subtract(const Duration(days: 7)))) {continue;}
+          start.isBefore(now.subtract(const Duration(days: 7)))) {
+        continue;
+      }
       final duration = end.difference(start).inSeconds;
       if (duration < 60) continue;
       final hour = start.hour;
@@ -63,7 +41,40 @@ class StudyMetrics {
                 ranked[1].value.drift / ranked[1].value.seconds
         ? ranked.first
         : null;
-    return StudyMetrics(elapsed(midnight, now), elapsed(yesterday, midnight),
-        elapsed(yesterday, priorCutoff), best?.key, best?.value.count ?? 0, intervals.any((v)=>v.end.isAfter(yesterday)&&v.start.isBefore(now)));
+    return StudyMetrics(
+        elapsed(midnight, now),
+        elapsed(yesterday, midnight),
+        elapsed(yesterday, priorCutoff),
+        best?.key,
+        best?.value.count ?? 0,
+        elapsed(yesterday, now) > 0);
+  }
+
+  static int Function(DateTime, DateTime) recordedDuration(
+      List<DistractionEvent> events) {
+    final intervals = <({DateTime start, DateTime end})>[];
+    for (final e in events) {
+      final start = e.triggeredAt.toLocal();
+      final seconds = e.timeAwaySeconds ?? e.recoveryTimeSeconds;
+      final end = e.recoveredAt?.toLocal() ??
+          (seconds == null ? null : start.add(Duration(seconds: seconds)));
+      if (end != null && end.isAfter(start)) {
+        intervals.add((start: start, end: end));
+      }
+    }
+    intervals.sort((a, b) => a.start.compareTo(b.start));
+    return (DateTime from, DateTime until) {
+      var cursor = from;
+      var seconds = 0;
+      for (final span in intervals) {
+        final start = span.start.isAfter(cursor) ? span.start : cursor;
+        final end = span.end.isBefore(until) ? span.end : until;
+        if (end.isAfter(start)) {
+          seconds += end.difference(start).inSeconds;
+          cursor = end;
+        }
+      }
+      return seconds;
+    };
   }
 }

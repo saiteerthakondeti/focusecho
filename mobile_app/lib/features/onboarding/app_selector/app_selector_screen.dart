@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -15,7 +16,7 @@ class AppSelectorScreen extends ConsumerWidget {
     final vm = ref.read(appSelectorProvider.notifier);
 
     return Scaffold(
-      appBar: AppBar(title: Text('Select Your Apps', style: AppTextStyles.displayMedium)),
+      appBar: AppBar(actions:const [Padding(padding:EdgeInsets.symmetric(horizontal:12),child:FocusEchoLogo())],title: Text('Select Your Apps', style: AppTextStyles.displayMedium)),
       body: Column(
         children: [
           Expanded(

@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -96,6 +97,7 @@ class FocusSessionScreen extends ConsumerWidget {
         state.showAlert && state.escalationLevel >= 2;
 
     return Scaffold(
+      appBar:AppBar(title:const FocusEchoBrand(),toolbarHeight:44),
       body: Stack(
         children: [
           SafeArea(
@@ -597,7 +599,7 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
     final selectedApp = state.selectedProductiveApp;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppBar(actions:const [Padding(padding:EdgeInsets.symmetric(horizontal:12),child:FocusEchoLogo())],
         title: const Text('Focus Session'),
         leading: BackButton(onPressed: () {
           if (context.canPop()) {

@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -49,7 +50,7 @@ class _PermissionWizardScreenState
     //   Page 1 — Notifications
     //   Page 2 — Battery Optimisation
     //   Page 3 — All Set
-    return Scaffold(
+    return Scaffold(appBar:AppBar(title:const FocusEchoBrand()),
       body: SafeArea(
         child: Column(
           children: [

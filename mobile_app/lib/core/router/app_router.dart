@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -76,7 +77,6 @@ class AppRouter {
         }
         return null;
       },
-
       routes: [
         GoRoute(
           name: 'splash',
@@ -165,25 +165,74 @@ class MainShell extends StatelessWidget {
 
   int _currentIndex(BuildContext context) {
     final location = GoRouterState.of(context).uri.path;
-    final idx = _tabs.indexOf(location);
+    final idx = _tabs
+        .indexWhere((tab) => location == tab || location.startsWith('$tab/'));
     return idx >= 0 ? idx : 0;
   }
 
   @override
   Widget build(BuildContext context) {
     final index = _currentIndex(context);
+    if (MediaQuery.sizeOf(context).width /
+            (MediaQuery.textScalerOf(context).scale(16) / 16) >=
+        900) {
+      const labels = ['Home', 'Analytics', 'Streaks & XP', 'Settings'];
+      const icons = [
+        Icons.home_outlined,
+        Icons.equalizer,
+        Icons.local_fire_department_outlined,
+        Icons.settings_outlined
+      ];
+      return Scaffold(
+          appBar: AppBar(
+              backgroundColor: const Color(0xff10142a),
+              title: Row(children: [
+                const FocusEchoBrand(),
+                const Spacer(),
+                for (var i = 0; i < _tabs.length; i++)
+                  Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      child: TextButton.icon(
+                          onPressed: () => context.go(_tabs[i]),
+                          icon: Icon(icons[i]),
+                          label: Text(labels[i]),
+                          style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              backgroundColor: i == index
+                                  ? const Color(0xff5335ab)
+                                  : Colors.transparent))),
+                const Spacer(),
+                IconButton(
+                    tooltip: "Account settings",
+                    onPressed: () => context.go(AppRoutes.settings),
+                    icon: const Icon(Icons.account_circle_outlined)),
+              ])),
+          body: child);
+    }
 
     return Scaffold(
       body: child,
+      appBar: AppBar(
+          automaticallyImplyLeading: false,
+          title: const FocusEchoBrand(),
+          actions: [
+            if (index != 3)
+              IconButton(
+                  tooltip: "Account settings",
+                  onPressed: () => context.go(AppRoutes.settings),
+                  icon: const Icon(Icons.account_circle_outlined))
+          ],
+          toolbarHeight: 46),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
-        backgroundColor: AppColors.surface,
+        height: 68,
+        backgroundColor: const Color(0xff0c1a2c),
         indicatorColor: AppColors.accentBlue.withValues(alpha: 0.15),
         onDestinationSelected: (i) => context.go(_tabs[i]),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard, color: AppColors.accentBlue),
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded, color: AppColors.accentBlue),
             label: 'Home',
           ),
           NavigationDestination(
@@ -193,7 +242,8 @@ class MainShell extends StatelessWidget {
           ),
           NavigationDestination(
             icon: Icon(Icons.local_fire_department_outlined),
-            selectedIcon: Icon(Icons.local_fire_department, color: AppColors.accentYellow),
+            selectedIcon: Icon(Icons.local_fire_department,
+                color: AppColors.accentYellow),
             label: 'Streaks',
           ),
           NavigationDestination(

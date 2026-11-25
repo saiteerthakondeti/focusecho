@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/models/user_profile.dart';
+import '../../core/models/focus_session.dart';
 import '../../core/providers/app_dependencies.dart';
 import '../../local_db/focus_session_dao.dart';
 import '../../services/supabase_service.dart';
@@ -24,6 +25,9 @@ class StreaksXpState {
     this.progressPercent = 0,
     this.errorMessage,
     this.totalXp = 0,
+    this.recentCompleted = 0,
+    this.recordedDistractions = 0,
+    this.hasCleanSession = false,
     this.streakDays = 0,
   });
 
@@ -33,6 +37,9 @@ class StreaksXpState {
   final double progressPercent;
   final String? errorMessage;
   final int totalXp;
+  final int recentCompleted;
+  final int recordedDistractions;
+  final bool hasCleanSession;
   final int streakDays;
 
   StreaksXpState copyWith({
@@ -42,6 +49,9 @@ class StreaksXpState {
     double? progressPercent,
     String? errorMessage,
     int? totalXp,
+    int? recentCompleted,
+    int? recordedDistractions,
+    bool? hasCleanSession,
     int? streakDays,
   }) {
     return StreaksXpState(
@@ -51,6 +61,9 @@ class StreaksXpState {
       progressPercent: progressPercent ?? this.progressPercent,
       errorMessage: errorMessage,
       totalXp: totalXp ?? this.totalXp,
+      recentCompleted: recentCompleted ?? this.recentCompleted,
+      recordedDistractions: recordedDistractions ?? this.recordedDistractions,
+      hasCleanSession: hasCleanSession ?? this.hasCleanSession,
       streakDays: streakDays ?? this.streakDays,
     );
   }
@@ -119,20 +132,48 @@ class StreaksXpViewModel extends StateNotifier<StreaksXpState> {
             profile.copyWith(totalXp: effectiveXp, streakDays: effectiveStreak);
       }
 
-      final sessions = await _sessionDao.getSessionHistory(100);
+      final records = {
+        for (final s in await _sessionDao.getSessionHistory(100))
+          if (s.userId == _userId) s.id: s
+      };
+      if (_supabaseService.currentUser?.id == _userId) {
+        try {
+          final rows = await Supabase.instance.client
+              .from('focus_sessions')
+              .select()
+              .eq('user_id', _userId)
+              .order('start_time', ascending: false)
+              .limit(100);
+          for (final row in rows) {
+            final session = FocusSession.fromSqliteMap(row);
+            if (records[session.id]?.endTime == null || session.endTime != null)
+              records[session.id] = session;
+          }
+        } catch (e) {
+          debugPrint('Streak history unavailable: ${e.runtimeType}');
+        }
+      }
+      if (!mounted) return;
+      final sessions = records.values
+          .where((s) => s.status == SessionStatus.completed)
+          .toList();
       final now = DateTime.now();
       final weekly = List<bool>.generate(7, (idx) {
-        final day = now.subtract(Duration(days: 6 - idx));
+        final day = DateTime(now.year, now.month, now.day - 6 + idx);
         return sessions.any(
           (s) =>
-              s.startTime.year == day.year &&
-              s.startTime.month == day.month &&
-              s.startTime.day == day.day,
+              s.startTime.toLocal().year == day.year &&
+              s.startTime.toLocal().month == day.month &&
+              s.startTime.toLocal().day == day.day,
         );
       });
       state = state.copyWith(
           userProfile: profile,
           weeklyActivity: weekly,
+          recentCompleted: sessions.length,
+          hasCleanSession: sessions.any((s) => s.totalDistractions == 0),
+          recordedDistractions:
+              sessions.fold<int>(0, (sum, s) => sum + s.totalDistractions),
           totalXp: effectiveXp,
           streakDays: effectiveStreak,
           errorMessage: null);
@@ -160,7 +201,8 @@ class StreaksXpViewModel extends StateNotifier<StreaksXpState> {
     final span = (nextThreshold - baseThreshold).clamp(1, 100000);
     state = state.copyWith(
       xpToNextLevel: (nextThreshold - xp).clamp(0, nextThreshold),
-      progressPercent: ((xp - baseThreshold) / span).clamp(0, 1),
+      progressPercent:
+          xp >= AppXP.level4Min ? 1 : ((xp - baseThreshold) / span).clamp(0, 1),
     );
   }
 

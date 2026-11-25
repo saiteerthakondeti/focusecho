@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
 import 'dart:math' as math;
 
 import 'package:fl_chart/fl_chart.dart';
@@ -32,7 +33,7 @@ class SessionSummaryScreen extends StatelessWidget {
     final median = (stats?['median_recovery_seconds'] as num?)?.toInt() ?? 0;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Session Complete')),
+      appBar: AppBar(actions:const [Padding(padding:EdgeInsets.symmetric(horizontal:12),child:FocusEchoLogo())],title: const Text('Session Complete')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
