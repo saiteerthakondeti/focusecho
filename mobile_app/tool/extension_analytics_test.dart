@@ -112,6 +112,8 @@ void main() {
       focusSessionProvider.overrideWith((ref) => _IdleSession()),
     ], child: const MaterialApp(home: AnalyticsScreen())));
     await tester.pumpAndSettle();
+    expect(find.text('Available completed sessions'), findsOneWidget);
+    expect(find.text('Distraction time · Today vs yesterday'), findsOneWidget);
     expect(find.text('Instagram'), findsOneWidget);
     expect(find.text('Daily Distractions'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());

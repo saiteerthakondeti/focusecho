@@ -40,8 +40,8 @@ class AnalyticsState {
     this.isLoading = false,
     this.errorMessage,
     // MOB-3g — remote backend enrichment fields
-    this.remoteFocusScoreAverage,
-    this.remoteWeeklySessions,
+    this.summaryAverageScore,
+    this.summarySessionCount,
     this.remoteTopApps = const [],
     this.remoteRiskTrend = const [],
     this.isRemoteLoaded = false,
@@ -59,8 +59,8 @@ class AnalyticsState {
   final String? errorMessage;
 
   // MOB-3g — enriched from FastAPI backend (null = not yet fetched / offline)
-  final double? remoteFocusScoreAverage;
-  final int? remoteWeeklySessions;
+  final double? summaryAverageScore;
+  final int? summarySessionCount;
   final List<TopApp> remoteTopApps;
   final List<RiskDayEntry> remoteRiskTrend;
   final bool isRemoteLoaded;
@@ -76,8 +76,8 @@ class AnalyticsState {
     double? recoveryRateTrend,
     bool? isLoading,
     String? errorMessage,
-    double? remoteFocusScoreAverage,
-    int? remoteWeeklySessions,
+    double? summaryAverageScore,
+    int? summarySessionCount,
     List<TopApp>? remoteTopApps,
     List<RiskDayEntry>? remoteRiskTrend,
     bool? isRemoteLoaded,
@@ -94,9 +94,9 @@ class AnalyticsState {
       recoveryRateTrend: recoveryRateTrend ?? this.recoveryRateTrend,
       isLoading: isLoading ?? this.isLoading,
       errorMessage: errorMessage,
-      remoteFocusScoreAverage:
-          remoteFocusScoreAverage ?? this.remoteFocusScoreAverage,
-      remoteWeeklySessions: remoteWeeklySessions ?? this.remoteWeeklySessions,
+      summaryAverageScore:
+          summaryAverageScore ?? this.summaryAverageScore,
+      summarySessionCount: summarySessionCount ?? this.summarySessionCount,
       remoteTopApps: remoteTopApps ?? this.remoteTopApps,
       remoteRiskTrend: remoteRiskTrend ?? this.remoteRiskTrend,
       isRemoteLoaded: isRemoteLoaded ?? this.isRemoteLoaded,
@@ -341,6 +341,9 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
         errorMessage: unavailable.isEmpty
             ? null
             : 'Could not load cloud ${unavailable.join(" and ")}. Showing available data. Pull to retry.',
+        isRemoteLoaded: false,
+        summarySessionCount: completed.length,
+        summaryAverageScore: completed.isEmpty ? 0 : completed.fold<double>(0, (sum, session) => sum + session.focusScore) / completed.length,
         metrics: StudyMetrics.calculate(recentEvents, sessions, now),
         weeklyFocusMinutes: weeklyFocus,
         dailyDistractions: dailyDistractions,
@@ -397,11 +400,11 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
 
       state = state.copyWith(
         errorMessage: state.errorMessage,
-        remoteFocusScoreAverage: summary?.focusScoreAverage,
-        remoteWeeklySessions: summary?.weeklySessions,
+        summaryAverageScore: summary?.focusScoreAverage,
+        summarySessionCount: summary?.weeklySessions,
         remoteTopApps: summary?.topDistractingApps ?? [],
         remoteRiskTrend: riskTrend,
-        isRemoteLoaded: true,
+        isRemoteLoaded: summary != null,
       );
 
       FELog.i(

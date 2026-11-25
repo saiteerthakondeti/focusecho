@@ -135,7 +135,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                 Card(
                     child: ListTile(
                         leading: const Icon(Icons.bar_chart),
-                        title: const Text('Distraction time'),
+                        title: const Text('Distraction time · Today vs yesterday'),
                         subtitle: Text(
                             m.hasDurations ? 'Today: ${_duration(m.today)} · Yesterday: ${_duration(m.yesterday)}\nYesterday by this time: ${_duration(m.previousAtThisTime)} · Change: ${m.today >= m.previousAtThisTime ? "+" : "−"}${_duration((m.today - m.previousAtThisTime).abs())}\nIncludes recorded distraction durations during focus sessions.' : 'No completed distraction durations recorded today or yesterday.'))),
                 FutureBuilder<bool>(
@@ -176,7 +176,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                     }),
               ],
               // MOB-3g — Remote backend summary card (shows only when loaded)
-              if (state.isRemoteLoaded) ...[
+              if (state.summarySessionCount != null) ...[
                 _RemoteSummaryCard(state: state),
                 const SizedBox(height: 16),
               ],
@@ -744,7 +744,7 @@ class _RemoteSummaryCard extends StatelessWidget {
               const Icon(Icons.cloud_done_outlined,
                   size: 16, color: AppColors.accentGreen),
               const SizedBox(width: 6),
-              Text('Backend Summary',
+              Text(state.isRemoteLoaded ? 'Backend Summary' : 'Available completed sessions',
                   style: AppTextStyles.bodyMedium
                       .copyWith(color: AppColors.accentGreen)),
             ],
@@ -755,13 +755,13 @@ class _RemoteSummaryCard extends StatelessWidget {
             children: [
               _SummaryChip(
                 label: 'Avg Focus Score',
-                value: state.remoteFocusScoreAverage != null
-                    ? state.remoteFocusScoreAverage!.toStringAsFixed(1)
+                value: state.summaryAverageScore != null
+                    ? state.summaryAverageScore!.toStringAsFixed(1)
                     : '—',
               ),
               _SummaryChip(
-                label: 'Synced Sessions',
-                value: state.remoteWeeklySessions?.toString() ?? '—',
+                label: state.isRemoteLoaded ? 'Synced Sessions' : 'Completed Sessions',
+                value: state.summarySessionCount?.toString() ?? '—',
               ),
             ],
           ),

@@ -2,10 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show AuthState, User;
 
 import '../../core/constants/app_constants.dart';
+import '../../core/providers/app_dependencies.dart';
 import '../../core/theme/app_theme.dart';
 import 'dashboard_viewmodel.dart';
+
+String? dashboardGreetingName(User? user, String? profileName) {
+  if (user == null || user.isAnonymous) return null;
+  final metadata = user.userMetadata;
+  for (final candidate in [
+    metadata?['full_name'],
+    metadata?['name'],
+    metadata?['given_name'],
+    profileName,
+    user.email?.split('@').first,
+  ]) {
+    if (candidate is String && candidate.trim().isNotEmpty) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -16,7 +35,7 @@ class DashboardScreen extends ConsumerWidget {
     final vm = ref.read(dashboardProvider.notifier);
     final now = DateTime.now();
     final greeting = now.hour < 12 ? 'morning' : (now.hour < 18 ? 'afternoon' : 'evening');
-    final name = state.userProfile?.displayName ?? 'there';
+    final auth = AppDependencies.supabaseService;
     final totalXp = state.userProfile?.totalXp ?? 0;
     final xpBase = totalXp >= AppXP.level4Min
         ? AppXP.level4Min
@@ -47,10 +66,18 @@ class DashboardScreen extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Good $greeting, $name', style: AppTextStyles.displayMedium.copyWith(fontSize: 22)),
-                Text(
-                  state.userProfile?.computedLevelTitle ?? AppStrings.level1,
-                  style: AppTextStyles.bodyLarge.copyWith(color: AppColors.accentBlue),
+                StreamBuilder<AuthState>(
+                  stream: auth.authChanges,
+                  builder: (context, snapshot) {
+                    final user = auth.currentUser;
+                    final profile = state.userProfile;
+                    final name = dashboardGreetingName(user,
+                        profile?.id == user?.id ? profile?.displayName : null);
+                    return Text(
+                      name == null ? 'Good $greeting' : 'Good $greeting, $name',
+                      style: AppTextStyles.displayMedium.copyWith(fontSize: 22),
+                    );
+                  },
                 ),
                 if (state.errorMessage != null) ...[
                   const SizedBox(height: 8),

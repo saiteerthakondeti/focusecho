@@ -375,6 +375,7 @@ class SupabaseService {
   }
 
   User? get currentUser => _client?.auth.currentUser;
+  Stream<AuthState>? get authChanges => _client?.auth.onAuthStateChange;
   Session? get currentSession => _client?.auth.currentSession;
 
   /// Returns a broadcast stream of distraction_events rows for [sessionId].
