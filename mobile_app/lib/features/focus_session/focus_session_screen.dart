@@ -1,4 +1,5 @@
-import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
+import '../workspaces/studio_ambience.dart';
+import 'planned_focus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/workspace_ui.dart';
+import '../../core/widgets/focusecho_brand.dart' show NeonPanel;
 import '../../services/ai_coach_service.dart';
 import '../ai_coach/widgets/coach_opt_in_dialog.dart';
 import '../distraction_alert/distraction_alert_modal.dart';
@@ -40,7 +43,8 @@ class FocusSessionScreen extends ConsumerWidget {
                 'Unknown app',
             packageName: next.lastDistractionPackage ?? 'unknown',
             riskScore: next.currentRiskScore,
-            onRecovery: () => vm.onRecovery(next.lastEventId!),
+            taskContext: vm.activeTask?.objective,
+            onRecovery: vm.returnToFocusFromIntervention,
             onEndSession: vm.stopSession,
             onSnooze: () => vm.snoozeApp(next.lastDistractionPackage!),
             onStreakPenalty: vm.dismissAlert,
@@ -84,11 +88,29 @@ class FocusSessionScreen extends ConsumerWidget {
       );
     }
 
+    if (vm.onBreak)
+      return Scaffold(
+          appBar: const FocusWorkspaceAppBar(
+              activePath: '/studio', pageTitle: 'Focus Studio'),
+          body: Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(vm.phase),
+            if (vm.phase == 'On break' && vm.breakEnds != null)
+              Text(
+                  'Scheduled return: ${TimeOfDay.fromDateTime(vm.breakEnds!).format(context)}'),
+            Text(vm.activeTask?.objective ?? state.intent,
+                textAlign: TextAlign.center),
+            FilledButton(
+                onPressed: vm.resumeBreak,
+                child: const Text('Resume original session')),
+            TextButton(
+                onPressed: vm.stopSession, child: const Text('End session')),
+          ])));
     if (!state.isActive) {
       return _SessionSetupView(state: state, vm: vm);
     }
 
-    final elapsed = Duration(seconds: state.elapsedSeconds);
+    final elapsed = Duration(seconds: vm.remainingSeconds);
     final timer =
         '${elapsed.inHours.toString().padLeft(2, '0')}:${(elapsed.inMinutes % 60).toString().padLeft(2, '0')}:${(elapsed.inSeconds % 60).toString().padLeft(2, '0')}';
 
@@ -96,139 +118,310 @@ class FocusSessionScreen extends ConsumerWidget {
     final showFullScreenIntervention =
         state.showAlert && state.escalationLevel >= 2;
 
+    final focusSeconds = state.elapsedSeconds.clamp(0, vm.plannedSeconds);
+    final progress =
+        vm.plannedSeconds == 0 ? 0.0 : focusSeconds / vm.plannedSeconds;
+    final currentTask = vm.activeTask;
+    final timerPanel = NeonPanel(
+      accent: const Color(0xff9f5cff),
+      child: Column(children: [
+        Wrap(spacing: 8, children: [
+          WorkspaceChip(
+              label: vm.mode,
+              icon: Icons.bolt_rounded,
+              accent: const Color(0xffc47aff)),
+          WorkspaceChip(
+              label: state.session?.productiveApp ?? 'Focus session',
+              icon: Icons.apps_rounded,
+              accent: const Color(0xff37d9f1)),
+        ]),
+        const SizedBox(height: 20),
+        SizedBox.square(
+          dimension: 260,
+          child: Stack(alignment: Alignment.center, children: [
+            SizedBox.expand(
+                child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 12,
+              strokeCap: StrokeCap.round,
+              color: const Color(0xff9e54ff),
+              backgroundColor: const Color(0xff23314f),
+            )),
+            Container(
+              width: 210,
+              height: 210,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const RadialGradient(
+                    colors: [Color(0xff1c2350), Color(0xff0a1126)]),
+                boxShadow: [
+                  BoxShadow(
+                      color: const Color(0xff8e4cff).withValues(alpha: .22),
+                      blurRadius: 35)
+                ],
+              ),
+              child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(timer,
+                        style: const TextStyle(
+                            fontSize: 45,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -1)),
+                    const SizedBox(height: 4),
+                    Text(vm.phase,
+                        style: const TextStyle(color: Color(0xffb5bfd8))),
+                  ]),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        Text(
+            state.session?.intent.trim().isNotEmpty == true
+                ? state.session!.intent
+                : 'Stay with your next step',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                color: Color(0xffd9def0),
+                fontSize: 16,
+                fontWeight: FontWeight.w600)),
+        const SizedBox(height: 14),
+        Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(
+                  onPressed: vm.pauseStudio,
+                  icon: const Icon(Icons.pause_rounded),
+                  label: const Text('Pause')),
+              OutlinedButton.icon(
+                  onPressed: vm.restartInterval,
+                  icon: const Icon(Icons.restart_alt_rounded),
+                  label: const Text('Restart')),
+              OutlinedButton.icon(
+                  onPressed: vm.takeBreakFromIntervention,
+                  icon: const Icon(Icons.coffee_outlined),
+                  label: const Text('Take a break')),
+              OutlinedButton.icon(
+                  onPressed: vm.stopSession,
+                  icon: const Icon(Icons.stop_rounded),
+                  label: const Text('End session')),
+            ]),
+      ]),
+    );
+    final taskPanel = NeonPanel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.track_changes, color: Color(0xffc47aff)),
+          SizedBox(width: 8),
+          Text('Current task',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700))
+        ]),
+        const SizedBox(height: 8),
+        Text(currentTask?.subject ?? state.session?.intent ?? state.intent,
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
+        if (currentTask != null) ...[
+          const SizedBox(height: 6),
+          Text(
+              currentTask.nextStep.isEmpty
+                  ? 'All planned steps reviewed'
+                  : 'Next up · ${currentTask.nextStep}',
+              style: const TextStyle(color: Color(0xffaeb9d3))),
+          if (currentTask.remaining.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            for (final step in currentTask.remaining.take(4))
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.radio_button_unchecked,
+                    color: Color(0xffb57aff), size: 20),
+                title: Text(step, maxLines: 2, overflow: TextOverflow.ellipsis),
+                onTap:
+                    step == currentTask.nextStep ? vm.finishCurrentStep : null,
+              ),
+          ],
+        ],
+        const SizedBox(height: 6),
+        OutlinedButton.icon(
+            onPressed: () => context.push('/planner'),
+            icon: const Icon(Icons.calendar_month_outlined),
+            label: const Text('Open Focus Planner')),
+      ]),
+    );
+    final statsPanel = NeonPanel(
+      accent: const Color(0xff30cee9),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Row(children: [
+          Icon(Icons.query_stats_rounded, color: Color(0xff35d8f2)),
+          SizedBox(width: 8),
+          Text('Session stats · live',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700))
+        ]),
+        const SizedBox(height: 10),
+        _StudioStatRow(
+            label: 'Elapsed focus interval',
+            value: '${focusSeconds ~/ 60}m ${focusSeconds % 60}s',
+            icon: Icons.timer_outlined,
+            accent: const Color(0xff35d8f2)),
+        _StudioStatRow(
+            label: 'Distractions recorded',
+            value: '${state.distractionCount}',
+            icon: Icons.warning_amber_rounded,
+            accent: const Color(0xffff6b9e)),
+        _StudioStatRow(
+            label: 'XP earned',
+            value: '${state.sessionXp}',
+            icon: Icons.bolt_rounded,
+            accent: const Color(0xffffce59)),
+      ]),
+    );
+    final shieldPanel = NeonPanel(
+      accent: const Color(0xff35d99f),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.shield_outlined, color: Color(0xff42e6bd)),
+          const SizedBox(width: 8),
+          const Expanded(
+              child: Text('Focus Shield',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700))),
+          WorkspaceChip(
+              label: kIsWeb
+                  ? (state.extensionConnected
+                      ? 'Connected'
+                      : 'Extension offline')
+                  : 'Monitoring active',
+              icon: Icons.circle,
+              accent: kIsWeb && !state.extensionConnected
+                  ? const Color(0xffffbd58)
+                  : const Color(0xff42e6bd)),
+        ]),
+        const SizedBox(height: 7),
+        Text(kIsWeb
+            ? (state.extensionConnected
+                ? 'Browser distraction monitoring is connected for this session.'
+                : 'Connect the FocusEcho extension for browser monitoring.')
+            : 'App monitoring is active for this focus session.'),
+      ]),
+    );
+
     return Scaffold(
-      appBar:AppBar(title:const FocusEchoBrand(),toolbarHeight:44),
+      appBar: const FocusWorkspaceAppBar(
+          activePath: '/studio', pageTitle: 'Focus Studio'),
       body: Stack(
         children: [
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  // Bug 2 fix — FittedBox prevents the HH:MM:SS string from
-                  // overflowing at narrow/mobile viewport widths.
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      timer,
-                      style: AppTextStyles.displayLarge
-                          .copyWith(color: AppColors.accentGreen),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-                  TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0.98, end: 1.02),
-                    duration: const Duration(seconds: 2),
-                    curve: Curves.easeInOut,
-                    builder: (context, scale, child) =>
-                        Transform.scale(scale: scale, child: child),
-                    onEnd: () {},
-                    child: Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: AppDecorations.glassmorphismCard(),
-                      child: Column(
-                        children: [
-                          const Icon(Icons.apps_rounded, size: 48),
-                          Text(state.session?.productiveApp ?? 'App',
-                              style: AppTextStyles.displayMedium),
-                          if (state.session?.intent.trim().isNotEmpty ??
-                              false) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              '"${state.session!.intent.trim()}"',
-                              textAlign: TextAlign.center,
-                              style: AppTextStyles.bodyMedium.copyWith(
-                                color: AppColors.accentBlue,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Bug 2 fix — Flexible prevents right-edge clipping when
-                      // the distraction count label grows long at small widths.
-                      Flexible(
-                        child: Text(
-                          'Distractions: ${state.distractionCount}',
-                          style: AppTextStyles.bodyLarge
-                              .copyWith(color: AppColors.accentRed),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          'XP: ${state.sessionXp}',
-                          style: AppTextStyles.bodyLarge
-                              .copyWith(color: AppColors.accentYellow),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
+            child: LayoutBuilder(builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 1000;
+              final left = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    WorkspacePageHeader(
+                        title: 'Focus Studio',
+                        subtitle:
+                            'A distraction-free space to do your best work.',
+                        icon: Icons.timer_rounded,
+                        trailing: const WorkspaceChip(
+                            label: 'Session live',
+                            icon: Icons.circle,
+                            accent: Color(0xff42e6bd))),
+                    taskPanel,
+                    const SizedBox(height: 14),
+                    timerPanel,
+                    if (kIsWeb || state.liveDistractionFeed.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      SizedBox(
+                          height: 230,
+                          child: LiveDistractionFeed(
+                              feed: state.liveDistractionFeed)),
                     ],
-                  ),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        children: [
-                          if (kIsWeb ||
-                              state.liveDistractionFeed.isNotEmpty) ...[
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              height: 220,
-                              child: LiveDistractionFeed(
-                                feed: state.liveDistractionFeed,
-                              ),
-                            ),
-                          ],
-                          if (kIsWeb && !state.extensionConnected) ...[
-                            const SizedBox(height: 16),
-                            Container(
-                              width: double.infinity,
-                              color: AppColors.accentYellow
-                                  .withValues(alpha: 0.15),
-                              padding: const EdgeInsets.all(10),
-                              child: const Row(
-                                children: [
-                                  Icon(Icons.extension_off,
-                                      color: AppColors.accentYellow, size: 16),
-                                  SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Install the FocusEcho Chrome extension for real-time monitoring.',
-                                      style: TextStyle(
-                                          color: AppColors.accentYellow,
-                                          fontSize: 12),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                          ParkingLotComposer(
-                            items: state.parkedItems,
-                            onAdd: vm.addParkedItem,
-                            onRemove: vm.removeParkedItem,
-                          ),
-                        ],
-                      ),
+                    if (vm.remainingSeconds == 0)
+                      const Padding(
+                          padding: EdgeInsets.only(top: 10),
+                          child: Text(
+                              'Interval complete. Take a break or finish your session.')),
+                  ]);
+              final right = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    statsPanel,
+                    const SizedBox(height: 12),
+                    shieldPanel,
+                    const SizedBox(height: 12),
+                    NeonPanel(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Row(children: [
+                            const Icon(Icons.headphones_rounded,
+                                color: Color(0xffbd77ff)),
+                            const SizedBox(width: 8),
+                            const Text('Ambient sounds',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w700, fontSize: 17))
+                          ]),
+                          const SizedBox(height: 8),
+                          const StudioAmbience(),
+                        ])),
+                    const SizedBox(height: 12),
+                    ParkingLotComposer(
+                        items: state.parkedItems,
+                        onAdd: vm.addParkedItem,
+                        onRemove: vm.removeParkedItem),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                        onPressed: () => context.push('/recovery'),
+                        icon: const Icon(Icons.favorite_border),
+                        label: const Text('Open Recovery Lab')),
+                    TextButton(
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (dialog) => AlertDialog(
+                                  title: const Text('Cancel this session?'),
+                                  content: const Text(
+                                      'This session will close without earning XP.'),
+                                  actions: [
+                                    TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(dialog, false),
+                                        child: const Text('Keep focusing')),
+                                    TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(dialog, true),
+                                        child: const Text('Cancel session')),
+                                  ],
+                                ));
+                        if (confirmed == true)
+                          await vm.stopSession(cancel: true);
+                      },
+                      child: const Text('Cancel session'),
                     ),
+                  ]);
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1500),
+                    child: wide
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                                Expanded(flex: 7, child: left),
+                                const SizedBox(width: 16),
+                                Expanded(flex: 3, child: right),
+                              ])
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                                left,
+                                const SizedBox(height: 14),
+                                right
+                              ]),
                   ),
-                  OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppColors.accentRed)),
-                    onPressed: vm.stopSession,
-                    child: const Text('STOP SESSION'),
-                  ),
-                ],
-              ),
-            ),
+                ),
+              );
+            }),
           ),
           if (showFullScreenIntervention)
             InterventionOverlay(
@@ -237,15 +430,55 @@ class FocusSessionScreen extends ConsumerWidget {
               appName: state.lastDistractionLabel ??
                   state.lastDistractionPackage ??
                   'Unknown app',
-              sessionIntent: state.session?.intent ?? state.intent,
+              sessionIntent: vm.activeTask?.objective ??
+                  state.session?.intent ??
+                  state.intent,
               onReturnToFocus: vm.returnToFocusFromIntervention,
               onTakeBreak: vm.takeBreakFromIntervention,
+              onRecoveryLab: () => context.push('/recovery'),
               onPauseSession: vm.pauseSessionFromIntervention,
             ),
         ],
       ),
     );
   }
+}
+
+class _StudioStatRow extends StatelessWidget {
+  const _StudioStatRow({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.accent,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: .14),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 19, color: accent),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Text(label,
+                  style: const TextStyle(color: Color(0xffb6c1d9)))),
+          Text(value,
+              style:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        ]),
+      );
 }
 
 class ParkingLotComposer extends StatefulWidget {
@@ -346,37 +579,46 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
   final _coachService = AiCoachService();
   bool _strict = false;
   final _allowed = <String>{};
-  Map<String,String> _installed = {};
+  Map<String, String> _installed = {};
   Future<void> _start(String app, String intent) async {
     if (_strict && !kIsWeb) {
-      const permissions=MethodChannel('focus_echo/permissions');
-      if(await permissions.invokeMethod<bool>('checkUsageAccess')!=true){
-        if(!mounted)return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Grant Usage Access, then start strict focus.')));
+      const permissions = MethodChannel('focus_echo/permissions');
+      if (await permissions.invokeMethod<bool>('checkUsageAccess') != true) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Grant Usage Access, then start strict focus.')));
         await permissions.invokeMethod<bool>('openUsageSettings');
         return;
       }
       const channel = MethodChannel('focus_echo/session');
       if (await channel.invokeMethod<bool>('overlayPermission') != true) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Enable the pause screen over other apps before starting strict focus.')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Enable the pause screen over other apps before starting strict focus.')));
         return;
       }
     }
     if (!mounted) return;
     if (_strict && kIsWeb && !widget.state.extensionConnected) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Connect the FocusEcho extension before starting strict focus.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              'Connect the FocusEcho extension before starting strict focus.')));
       return;
     }
-    await widget.vm.startSession(app,intent:intent,strict:_strict,allowed:_allowed.toList());
+    await widget.vm.startSession(app,
+        intent: intent, strict: _strict, allowed: _allowed.toList());
   }
+
   Future<void> _changeMode(bool strict) async {
-    setState(()=>_strict=strict);
+    setState(() => _strict = strict);
     if (!strict || kIsWeb || _installed.isNotEmpty) return;
-    const channel=MethodChannel('focus_echo/session');
-    final apps=await channel.invokeMapMethod<String,String>('listLaunchableApps');
-    if(mounted && apps!=null) setState(()=>_installed=apps);
+    const channel = MethodChannel('focus_echo/session');
+    final apps =
+        await channel.invokeMapMethod<String, String>('listLaunchableApps');
+    if (mounted && apps != null) setState(() => _installed = apps);
   }
+
   bool _isRefining = false;
   DateTime? _lastRefineTap;
   String? _refineFeedback;
@@ -405,6 +647,12 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
   void initState() {
     super.initState();
     _intentCtrl = TextEditingController(text: widget.state.intent);
+    final task = widget.vm.selectedTask;
+    if (task != null) {
+      widget.vm.configureStudio('Custom', task.minutes, 5);
+      _allowed.addAll(kIsWeb ? task.sites : task.apps);
+      _strict = _allowed.isNotEmpty;
+    }
   }
 
   Future<void> _onRefineTapped() async {
@@ -599,16 +847,8 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
     final selectedApp = state.selectedProductiveApp;
 
     return Scaffold(
-      appBar: AppBar(actions:const [Padding(padding:EdgeInsets.symmetric(horizontal:12),child:FocusEchoLogo())],
-        title: const Text('Focus Session'),
-        leading: BackButton(onPressed: () {
-          if (context.canPop()) {
-            context.pop();
-          } else {
-            context.go('/dashboard');
-          }
-        }),
-      ),
+      appBar: const FocusWorkspaceAppBar(
+          activePath: '/studio', pageTitle: 'Focus Studio'),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
@@ -621,20 +861,82 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const WorkspacePageHeader(
+                    title: 'Focus Studio',
+                    subtitle:
+                        'Choose a task and a focus mode. Your session shield stays with you.',
+                    icon: Icons.timer_rounded,
+                  ),
                   OutlinedButton.icon(
                       icon: const Icon(Icons.calendar_month),
                       label: const Text('Study planner'),
                       onPressed: () async {
-                        final subject = await Navigator.push<String>(
+                        final task = await Navigator.push<PlannedFocus>(
                             context,
                             MaterialPageRoute(
                                 builder: (_) => const StudyPlanner()));
-                        if (!mounted || subject == null) return;
-                        vm.setIntent(subject);
-                        if (selectedApp != null) {
-                          await _start(selectedApp,subject);
-                        }
+                        if (!mounted || task == null || !vm.selectTask(task))
+                          return;
+                        setState(() {
+                          _intentCtrl.text = task.objective;
+                          _allowed.clear();
+                          _allowed.addAll(kIsWeb ? task.sites : task.apps);
+                          _strict = _allowed.isNotEmpty;
+                        });
                       }),
+                  Wrap(spacing: 8, children: [
+                    for (final name in ['Pomodoro', 'Deep Work', 'Custom'])
+                      ChoiceChip(
+                          label: Text(name),
+                          selected: vm.mode == name,
+                          onSelected: (_) => setState(() => vm.configureStudio(
+                              name,
+                              name == 'Deep Work'
+                                  ? 50
+                                  : name == 'Pomodoro'
+                                      ? 25
+                                      : vm.selectedTask?.minutes ??
+                                          vm.focusMinutes,
+                              name == 'Deep Work' ? 10 : 5)))
+                  ]),
+                  if (vm.mode == 'Custom')
+                    TextFormField(
+                        key: ValueKey(vm.mode),
+                        initialValue: vm.focusMinutes.toString(),
+                        decoration: const InputDecoration(
+                            labelText: 'Focus duration (1–240 min)'),
+                        keyboardType: TextInputType.number,
+                        onChanged: (v) {
+                          final n = int.tryParse(v);
+                          if (n != null)
+                            vm.configureStudio('Custom', n, vm.breakMinutes);
+                        }),
+                  ListTile(
+                      title: Text('${vm.focusMinutes} min focus'),
+                      trailing: DropdownButton<int>(
+                          value: vm.breakMinutes,
+                          items: [
+                            for (final n in [1, 3, 5, 10, 15, 30])
+                              DropdownMenuItem(
+                                  value: n, child: Text('$n min break'))
+                          ],
+                          onChanged: (v) => setState(() => vm.configureStudio(
+                              vm.mode, vm.focusMinutes, v ?? 5)))),
+                  if (vm.selectedTask case final task?)
+                    ListTile(
+                        title: Text(task.subject),
+                        subtitle: Text('Planned · ${task.minutes} min'),
+                        trailing: IconButton(
+                            tooltip: 'Use independent session',
+                            icon: const Icon(Icons.link_off),
+                            onPressed: () {
+                              vm.detachTask();
+                              setState(() {
+                                _allowed.clear();
+                                _strict = false;
+                                _intentCtrl.clear();
+                              });
+                            })),
                   SwitchListTile(
                       secondary: const Icon(Icons.shield_outlined),
                       title: const Text('Strict focus'),
@@ -663,7 +965,8 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
                           }
                         }),
                   if (_strict && kIsWeb)
-                    TextFormField(initialValue:_allowed.join(", "),
+                    TextFormField(
+                        initialValue: _allowed.join(", "),
                         decoration: const InputDecoration(
                             labelText: 'Allowed domains (comma separated)',
                             prefixIcon: Icon(Icons.language)),
@@ -1035,9 +1338,7 @@ class _SessionSetupViewState extends State<_SessionSetupView> {
 
                   // ── Section 4: Start Action Button ─────────────────────────
                   InkWell(
-                    onTap: canStart
-                        ? () => _start(selectedApp!,intent)
-                        : null,
+                    onTap: canStart ? () => _start(selectedApp!, intent) : null,
                     borderRadius: BorderRadius.circular(14),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),

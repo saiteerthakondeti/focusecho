@@ -187,10 +187,11 @@ async function loadConfig() {
 // Offline event queue (purge on sync or 7-day TTL; NOT on session end)
 // ---------------------------------------------------------------------------
 async function enqueueEvent(feEvent) {
+  const {fe_cloud_paused,fe_user_id} = await chrome.storage.local.get(['fe_cloud_paused','fe_user_id']);
   const queuedAt = Date.now();
   const size = await updateEventQueue(queue => [
     ...queue.filter(entry => entry.queued_at >= queuedAt - QUEUE_TTL_MS),
-    { event: feEvent, queued_at: queuedAt, queue_id: crypto.randomUUID() },
+    { event: feEvent, owner: fe_user_id || null, local_only: fe_cloud_paused === true, queued_at: queuedAt, queue_id: crypto.randomUUID() },
   ]);
   LOG.act(`queued event: ${feEvent.event_type} | queue size: ${size}`);
 }
@@ -223,8 +224,14 @@ async function dispatch(event) {
 async function _dispatchInner(event) {
   const session = await loadSession();
   if (!session?.active && event.type !== EV.SESSION_STARTED) return;
+  if (event.payload?.expectedSession && session?.session_id !== event.payload.expectedSession) return;
 
   const distraction = await loadDistraction();
+  if(event.type==='PLANNER_OBJECTIVE_UPDATED'){
+    session.intention=event.payload.objective;
+    await saveSession(session);
+    return;
+  }
   const currentState = session?.state ?? STATE.IDLE;
 
   // Build context for the pure transition function
@@ -373,6 +380,7 @@ async function _executeAction(name, param, { session, distraction, event, now })
         session_id:           payload.session_id,
         intention:            payload.intention,
         started_at:           now,
+        recoverySeconds: Math.min(300, Math.max(1, Number(payload.recoverySeconds) || 10)),
         strict: payload.strict === true,
         allowed: payload.allowed || [],
         distraction_list:     payload.distraction_list,
@@ -569,10 +577,11 @@ async function _executeAction(name, param, { session, distraction, event, now })
       // Sync recovery event to Supabase cloud database & FastAPI backend
       syncEventQueue(session).catch(e => LOG.err('cloud db sync error:', e.message));
 
+      if (classification === 'recovery') observeReturn(session,distraction).catch(() => {});
       // Realtime notification to registered Web Dashboard tab
       notifyDashboard({
         type: 'fe:dashboard_activity',
-        kind: 'return',
+        kind: classification === 'recovery' ? 'return' : 'intentional',
         session_id: session.session_id,
         event_id: distraction.event_id,
         host: distraction.host,
@@ -960,6 +969,25 @@ function describeTab(url) {
 }
 
 /** Evaluate the tab the user is on right now (used when a session starts). */
+// Confirm a continuous return only while the worker observes the same focused tab.
+let activityRevision = 0;
+async function observeReturn(session, distraction) {
+  const revision = activityRevision;
+  const [tab] = await chrome.tabs.query({active:true,lastFocusedWindow:true});
+  if (!tab?.url || !/^https?:/.test(tab.url)) return;
+  const seconds = session.recoverySeconds || 10;
+  setTimeout(async () => {
+    try {
+      const current = await loadSession();
+      const window = await chrome.windows.get(tab.windowId);
+      const live = await chrome.tabs.get(tab.id);
+      if (activityRevision !== revision || !current?.active || current.state !== STATE.MONITORING ||
+          current.session_id !== session.session_id || !window.focused || !live.active || live.url !== tab.url) return;
+      await notifyDashboard({type:'fe:dashboard_activity',kind:'sustained_return',
+        event_id:distraction.event_id,session_id:session.session_id, time_away_seconds:seconds});
+    } catch (_) { /* Closed tab or suspended worker leaves the return unverified. */ }
+  },seconds*1000);
+}
 async function scanActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -980,6 +1008,7 @@ async function scanActiveTab() {
 }
 
 chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
+  activityRevision++;
   try {
     const tab = await chrome.tabs.get(tabId);
     const session = await loadSession();
@@ -1037,6 +1066,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (tab.active && changeInfo.url) activityRevision++;
   // Only care about URL changes on the active tab; SPA navigation is handled
   // via webNavigation.onHistoryStateUpdated which is more reliable.
   if (changeInfo.status !== 'complete' || !tab.active) return;
@@ -1144,6 +1174,7 @@ chrome.webNavigation.onCommitted.addListener(async ({ tabId, frameId, url, trans
 // Window focus
 // ---------------------------------------------------------------------------
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  activityRevision++;
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
     await dispatch({ type: EV.WINDOW_BLURRED });
   } else {
@@ -1198,6 +1229,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function _handleMessage(message, sender) {
   const { type } = message;
 
+  if (type === 'fe:reopen_task') {
+    const session = await loadSession();
+    if (!session?.active || session.session_id !== message.sessionId) return {ok:false};
+    await _executeAction('NAVIGATE_BACK_TO_FOCUS', null, { session, distraction: null, event:message, now:Date.now() });
+    return {ok:true};
+  }
+  if (type === 'fe:update_objective' && typeof message.sessionId === 'string' && message.sessionId && typeof message.objective === 'string') {
+    await dispatch({type:'PLANNER_OBJECTIVE_UPDATED',payload:{expectedSession:message.sessionId,objective:message.objective.slice(0,1600)}});
+    return {ok:true};
+  }
+  if (type === 'fe:session_break') {
+    if (typeof message.sessionId !== 'string' || !message.sessionId || typeof message.paused !== 'boolean') return {ok:false};
+    await dispatch({type:message.paused ? EV.USER_PAUSE_SESSION : EV.USER_RESUME_SESSION,payload:{expectedSession:message.sessionId}});
+    if (!message.paused) await scanActiveTab();
+    return {ok:true};
+  }
   if (type === 'fe:get_config') {
     const config = await loadConfig();
     return { ok: true, distraction_list: (config.distraction_list || [])
@@ -1214,6 +1261,7 @@ async function _handleMessage(message, sender) {
     await dispatch({
       type: EV.SESSION_STARTED,
       payload: {
+        recoverySeconds: message.recoverySeconds,
         strict: message.strict === true,
         allowed: Array.isArray(message.allowed) ? message.allowed.filter(x=>typeof x === "string").map(normalizeHost).filter(Boolean) : [],
         intention: intention || 'Focus Session',
@@ -1228,6 +1276,10 @@ async function _handleMessage(message, sender) {
   }
 
   // --- Cloud credentials sync from Web dashboard ---
+  if (type === 'fe:pause_cloud') {
+    await chrome.storage.local.set({fe_cloud_paused:true});
+    return {ok:true};
+  }
   if (type === 'fe:save_credentials') {
     await saveSyncCredentials(message);
     const session = await loadSession();

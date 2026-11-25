@@ -90,6 +90,7 @@ export async function saveSyncCredentials(creds) {
   if (creds.supabaseUrl)     updates.fe_supabase_url = creds.supabaseUrl;
   if (creds.supabaseAnonKey) updates.fe_supabase_anon_key = creds.supabaseAnonKey;
   if (creds.backendUrl)      updates.fe_backend_url = creds.backendUrl;
+  if (creds.authToken && creds.userId) updates.fe_cloud_paused = false;
   if (creds.authToken)       updates.fe_auth_token = creds.authToken;
   if (creds.refreshToken)    updates.fe_refresh_token = creds.refreshToken;
   if (creds.userId)          updates.fe_user_id = creds.userId;
@@ -333,12 +334,26 @@ export function syncEventQueue(activeSession = null) {
 
 async function uploadEventQueue(activeSession) {
   const queueData = await chrome.storage.local.get(SK.EVENT_QUEUE);
-  const queue = queueData[SK.EVENT_QUEUE] || [];
+  let queue = queueData[SK.EVENT_QUEUE] || [];
   if (queue.length === 0) {
     return { synced: 0, remaining: 0 };
   }
 
+  const settings = await chrome.storage.local.get(['fe_cloud_paused','fe_user_id']);
+  if (settings.fe_cloud_paused) return {synced:0,remaining:queue.length};
   const creds = await getSyncCredentials();
+  const pendingCount=queue.length;
+  // Legacy entries without an owner are eligible only when they belong to the
+  // currently active session and that session explicitly names this account.
+  // Never let an unowned/offline event silently cross account boundaries.
+  queue=queue.filter(item=>{
+    if (item.local_only) return false;
+    if (item.owner) return item.owner===creds.userId;
+    const event=item.event||item;
+    return Boolean(activeSession?.user_id && activeSession.user_id===creds.userId &&
+      event.session_id===activeSession.session_id);
+  });
+  if (!queue.length) return {synced:0,remaining:pendingCount};
   let activeCreds = creds;
   if (!activeCreds.authToken && activeCreds.refreshToken) {
     activeCreds = await refreshAuthSession(activeCreds) || activeCreds;

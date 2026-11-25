@@ -118,6 +118,35 @@ class DashboardScreen extends ConsumerWidget {
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
+                                Wrap(spacing: 8, runSpacing: 6, children: [
+                                  for (final w in [
+                                    (
+                                      '/planner',
+                                      'Planner',
+                                      Icons.calendar_month
+                                    ),
+                                    (
+                                      '/studio',
+                                      'Focus Studio',
+                                      Icons.timer_outlined
+                                    ),
+                                    (
+                                      '/recovery',
+                                      'Recovery Lab',
+                                      Icons.favorite_outline
+                                    ),
+                                    (
+                                      '/echo-coach',
+                                      'EchoCoach AI',
+                                      Icons.auto_awesome
+                                    )
+                                  ])
+                                    ActionChip(
+                                        avatar: Icon(w.$3, size: 18),
+                                        label: Text(w.$2),
+                                        onPressed: () => context.push(w.$1))
+                                ]),
+                                const SizedBox(height: 12),
                                 StreamBuilder<AuthState>(
                                     stream: auth.authChanges,
                                     builder: (context, snapshot) {

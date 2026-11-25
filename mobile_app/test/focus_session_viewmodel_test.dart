@@ -1,3 +1,4 @@
+import 'package:focus_echo_ai/features/focus_session/planned_focus.dart';
 // ignore_for_file: lines_longer_than_80_chars
 //
 // FocusEcho — Focus Session ViewModel Unit Tests
@@ -459,6 +460,24 @@ void main() {
           reason:
               'Session intent must exactly match user entry (TC_INTENT_001)');
       expect(vm.state.intent, equals(intentText));
+      await vm.stopSession();
+      final task=PlannedFocus.fromSlot({'id':'algebra','subject':'Algebra','starts_at':'2026-11-25T10:00:00Z','ends_at':'2026-11-25T10:25:00Z','details':{'steps':['Read','Solve'],'done':['Read']}});
+      expect(vm.selectTask(task),isTrue);
+      await _startSession(vm,intent:task.objective);
+      final id=vm.state.session!.id;
+      expect(vm.plannerSessions.task(id)?.nextStep,'Solve');
+      await vm.startSession('another app',intent:'duplicate');
+      expect(vm.state.session!.id,id);
+      vm.takeBreakFromIntervention();
+      await Future<void>.delayed(const Duration(milliseconds:50));
+      expect(vm.onBreak,isTrue);
+      await vm.resumeBreak();
+      expect(vm.state.session!.id,id);
+      expect(vm.state.isActive,isTrue);
+      await vm.finishCurrentStep();
+      expect(vm.activeTask?.nextStep,'');
+      await vm.stopSession();
+      expect(vm.plannerSessions.records[id]['focus_seconds'],isA<int>());
     });
 
     test('TC_INTENT_002: empty intent does NOT start a session', () async {

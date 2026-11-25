@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import unittest
 from unittest.mock import MagicMock, patch
 
+from app.schemas.coach import CoachQuestion
 from fastapi import HTTPException
 from app.services.ai_coach_service import (
     AiCoachService,
@@ -272,9 +273,24 @@ class EchoCoachTests(unittest.TestCase):
         service = self._live_service()
         with patch.object(service, "get_opt_in_status", return_value=(False, None)):
             with patch("app.services.ai_coach_service.Groq") as mock_groq:
+                self.assertTrue(service.advise(CoachQuestion(question="How can I focus?"), "opted-out-user").is_fallback)
+                self.assertTrue(service.draft_task("write report", "opted-out-user").is_fallback)
                 result = service.refine_intention("write report", "opted-out-user")
         self.assertTrue(result.is_fallback)
         mock_groq.assert_not_called()
+        # Advice is built from owned aggregate records and contains no parked text.
+        with patch.object(service, "_server_opted_in", return_value=True), patch.object(service, "db") as db, patch.object(service, "_call_llm_api") as model:
+            query = db.table.return_value.select.return_value
+            query.eq.return_value = query
+            query.order.return_value.limit.return_value.execute.return_value.data = [{"total_distractions": 2}]
+            model.return_value.payload.model_dump.return_value = {"advice": "Open the next planned step."}
+            with patch("app.services.ai_coach_service._check_and_increment_rate_limit", return_value=True):
+                answer = service.advise(CoachQuestion(question="What next?", previous_question="How long?"), "owner")
+            self.assertFalse(answer.is_fallback)
+            query.eq.assert_any_call("user_id", "owner")
+            self.assertEqual(json.loads(model.call_args.args[1])["facts"], {"recent_completed_sessions": 1, "recorded_distractions": 2})
+            db.table.return_value.select.assert_called_once_with("total_distractions")
+
     def test_groq_sdk_request_contract(self):
         payload = json.dumps({
             "is_sufficiently_clear": True,

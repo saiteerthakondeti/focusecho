@@ -163,6 +163,7 @@ const noAuth = await syncEventQueue();
 assert(noAuth.remaining === 1 && writeRequests === 0, 'no user token keeps queued data local without any write');
 
 queueStorage.fe_user_id = 'user-1';
+queueStorage.fe_event_queue[0].owner = 'user-1';
 queueStorage.fe_auth_token = 'expired-access-token';
 queueStorage.fe_refresh_token = 'refresh-secret-test-value';
 let refreshRequests = 0;
@@ -186,7 +187,7 @@ globalThis.fetch = async (url, options) => {
   if (url.endsWith('/distraction_events')) {
     eventRequests += 1;
     if (eventRequests === 2) {
-      await updateEventQueue(queue => [...queue, { event: { id: 'later-event' }, queued_at: Date.now() }]);
+      await updateEventQueue(queue => [...queue, { event: { id: 'later-event' }, owner: 'user-1', queued_at: Date.now() }]);
     }
     eventAuthorization.push(options.headers.Authorization);
     return eventRequests === 1
@@ -204,6 +205,15 @@ assert(eventAuthorization[0] === 'Bearer expired-access-token' && eventAuthoriza
 assert(apiKeyHeaders.every(value => value === DEFAULT_SUPABASE_ANON_KEY), 'anon key remains only in apikey header');
 assert(queueStorage.fe_refresh_token === 'new-refresh-token', 'rotated refresh token is persisted');
 assert(!emittedInfoLogs.join(' ').includes('refresh-secret-test-value'), 'refresh token never appears in logs');
+const writesBeforeIsolationCheck = eventRequests;
+queueStorage.fe_event_queue = [
+  { owner: 'another-user', event: { id: 'other-account-event' }, queued_at: Date.now() },
+  { owner: 'user-1', local_only: true, event: { id: 'local-only-event' }, queued_at: Date.now() },
+  { event: { id: 'unowned-event' }, queued_at: Date.now() },
+];
+const isolated = await syncEventQueue();
+assert(eventRequests === writesBeforeIsolationCheck, 'events owned by another account, marked local-only, or without provable ownership never upload');
+assert(isolated.remaining === 3, 'unuploadable events remain queued without crossing account boundaries');
 globalThis.fetch = originalFetch;
 delete globalThis.chrome;
 

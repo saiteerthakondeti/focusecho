@@ -69,7 +69,8 @@ class AppDecorations {
           blurRadius: 0,
           spreadRadius: 0,
         ),
-        const BoxShadow(color: Colors.black26, blurRadius: 12, offset: Offset(0, 6)),
+        const BoxShadow(
+            color: Colors.black26, blurRadius: 12, offset: Offset(0, 6)),
       ],
     );
   }
@@ -116,6 +117,15 @@ class AppTheme {
         surface: AppColors.surface,
       ),
       cardColor: AppColors.card,
+      cardTheme: CardThemeData(
+        color: const Color(0xff151c32),
+        elevation: 0,
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Color(0xff293657)),
+        ),
+      ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           foregroundColor: Colors.white,
@@ -133,5 +143,6 @@ class AppTheme {
 }
 
 BackdropFilter subtleBlur({required Widget child}) {
-  return BackdropFilter(filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4), child: child);
+  return BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4), child: child);
 }

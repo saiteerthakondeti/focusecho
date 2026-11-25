@@ -66,7 +66,7 @@ class FocusSession with _$FocusSession {
         (v) =>
             v.name == (map['status'] as String? ?? SessionStatus.active.name),
       ),
-      isSynced: (map['is_synced'] as int? ?? 0) == 1,
+      isSynced: map['is_synced'] == 1 || map['is_synced'] == true,
       focusRating: (map['focus_rating'] as num?)?.toInt(),
       driftReason: map['drift_reason'] as String?,
       parkedItems: _decodeParkedItems(map['parked_items']),

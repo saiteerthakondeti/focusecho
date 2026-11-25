@@ -3,6 +3,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 // From the repository root, run: node browser_extension/tests/hosted-analytics-smoke.mjs
 // Requires a Flutter web build configured for the hosted test project and
 // Puppeteer's Chrome for Testing. Each run creates a hosted anonymous user.
@@ -154,7 +155,7 @@ try {
     "empty Analytics screen",
     async () => {
       await enableSemantics();
-      return rendered("No distraction data yet.");
+      return rendered("No distractions recorded this week.");
     },
     20,
   );
@@ -238,6 +239,216 @@ try {
     "PASS Analytics fetched exact event and rendered",
     finalRow.app_label,
   );
+
+  // Exercise Planner -> hosted row -> a clean second browser storage context.
+  const credentials = await ctrl.evaluate(() =>
+    chrome.storage.local.get([
+      "fe_user_id",
+      "fe_auth_token",
+      "fe_supabase_url",
+      "fe_supabase_anon_key",
+    ]),
+  );
+  assert(credentials.fe_user_id && credentials.fe_auth_token);
+  const appIdentity = await page.evaluate(() => ({
+    keys: Object.keys(localStorage).filter((key) => /user|auth|token/i.test(key)),
+    owner: JSON.parse(localStorage.getItem("flutter.user_id") || "null"),
+    authSub: Object.entries(localStorage).flatMap(([key, value]) => {
+      if (!/auth-token|supabase/i.test(key)) return [];
+      try {
+        const parsed = JSON.parse(value);
+        const token = parsed?.access_token || parsed?.currentSession?.access_token;
+        return token ? [JSON.parse(atob(token.split(".")[1])).sub] : [];
+      } catch { return []; }
+    })[0] || null,
+  }));
+  const extensionSub = JSON.parse(Buffer.from(credentials.fe_auth_token.split(".")[1], "base64url").toString()).sub;
+  console.log("Auth identity alignment", {
+    localOwnerPresent: Boolean(appIdentity.owner),
+    ownerMatchesExtension: appIdentity.owner === credentials.fe_user_id,
+    appOwnerMatchesToken: appIdentity.owner === extensionSub,
+    extensionOwnerMatchesToken: credentials.fe_user_id === extensionSub,
+    appTokenMatchesExtension: appIdentity.authSub === extensionSub,
+    relevantStorageKeys: appIdentity.keys,
+  });
+  assert.equal(appIdentity.owner, extensionSub, "Flutter preference owner must match the authenticated Supabase token");
+  const plannerId = randomUUID();
+  const plannerSubject = "Cross-device sync verification";
+  const startsAt = new Date(Date.now() + 60_000).toISOString();
+  const endsAt = new Date(Date.now() + 45 * 60_000).toISOString();
+  const plannerRow = {
+    id: plannerId,
+    user_id: extensionSub,
+    subject: plannerSubject,
+    starts_at: startsAt,
+    ends_at: endsAt,
+    details: {
+      steps: ["Verify the synced task"],
+      done: [],
+      priority: "High",
+      apps: [],
+      sites: [],
+    },
+    dirty: true,
+  };
+  await page.evaluate(
+    ({ key, row }) => localStorage.setItem(key, JSON.stringify(JSON.stringify([row]))),
+    { key: "flutter.study_slots_" + extensionSub, row: plannerRow },
+  );
+  await page.goto(url + "/#/planner", { waitUntil: "domcontentloaded" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  console.log(
+    "Planner route check",
+    page.url(),
+    "cached owner matches extension:",
+    await page.evaluate((owner) => JSON.parse(localStorage.getItem("flutter.user_id") || "null") === owner, credentials.fe_user_id),
+  );
+  await wait("Planner shows the locally queued task", async () => {
+    await enableSemantics();
+    return rendered(plannerSubject);
+  });
+  const hostedTask = await wait("Planner task uploaded under its owner", async () =>
+    ctrl.evaluate(async ({ id }) => {
+      const c = await chrome.storage.local.get([
+        "fe_supabase_url",
+        "fe_supabase_anon_key",
+        "fe_auth_token",
+      ]);
+      const u = new URL("/rest/v1/study_slots", c.fe_supabase_url);
+      u.search = new URLSearchParams({
+        id: "eq." + id,
+        select: "id,user_id,subject,details",
+      });
+      const r = await fetch(u, {
+        headers: {
+          apikey: c.fe_supabase_anon_key,
+          Authorization: "Bearer " + c.fe_auth_token,
+        },
+      });
+      if (!r.ok) throw Error("Planner read returned HTTP " + r.status);
+      return (await r.json())[0];
+    }, { id: plannerId }),
+  );
+  assert.equal(hostedTask.user_id, extensionSub);
+  assert.equal(hostedTask.subject, plannerSubject);
+  console.log("PASS Planner row synced to hosted Supabase", plannerId);
+
+  // Upload a Studio snapshot through its normal EchoCoach-triggered sync path.
+  const studioKey = "flutter.planner_sessions_" + extensionSub;
+  await page.evaluate(
+    ({ key, sessionId }) =>
+      localStorage.setItem(
+        key,
+        JSON.stringify(JSON.stringify({
+          [sessionId]: {
+            focus_seconds: 120,
+            recorded_drift_seconds: 0,
+            recovering_seconds: 0,
+            paused_seconds: 0,
+            break_seconds: 0,
+            wall_seconds: 120,
+            mode: "Deep Work",
+            pending: true,
+            cancelled: false,
+          },
+        })),
+      ),
+    { key: studioKey, sessionId: sid },
+  );
+  await page.goto(url + "/#/echo-coach", { waitUntil: "domcontentloaded" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const hostedStudio = await wait("Studio summary saved on focus session", async () =>
+    ctrl.evaluate(async ({ id }) => {
+      const c = await chrome.storage.local.get([
+        "fe_supabase_url",
+        "fe_supabase_anon_key",
+        "fe_auth_token",
+      ]);
+      const u = new URL("/rest/v1/focus_sessions", c.fe_supabase_url);
+      u.search = new URLSearchParams({
+        id: "eq." + id,
+        select: "id,studio_summary",
+      });
+      const r = await fetch(u, {
+        headers: {
+          apikey: c.fe_supabase_anon_key,
+          Authorization: "Bearer " + c.fe_auth_token,
+        },
+      });
+      if (!r.ok) throw Error("Studio read returned HTTP " + r.status);
+      return (await r.json())[0]?.studio_summary;
+    }, { id: sid }),
+  );
+  assert.equal(hostedStudio.mode, "Deep Work");
+  assert.equal(hostedStudio.focus_seconds, 120);
+  console.log("PASS Studio summary synced to hosted Supabase", sid);
+
+  // Clone only the authenticated identity into a fresh context: no Planner or
+  // Studio cache is copied, so successful rendering must come from cloud rows.
+  const authAndConsent = await page.evaluate(() =>
+    Object.entries(localStorage).filter(([key]) =>
+      /auth-token|supabase/i.test(key) ||
+      ["flutter.user_id", "flutter.consent_given", "flutter.has_skipped_login"].includes(key),
+    ),
+  );
+  const secondContext = await browser.createBrowserContext();
+  const secondDevice = await secondContext.newPage();
+  await secondDevice.setViewport({ width: 1280, height: 1000 });
+  await secondDevice.evaluateOnNewDocument(
+    ({ entries, slotsKey, studioKey }) => {
+      for (const [key, value] of entries) localStorage.setItem(key, value);
+      localStorage.setItem(slotsKey, JSON.stringify("[]"));
+      localStorage.setItem(studioKey, JSON.stringify("{}"));
+    },
+    {
+      entries: authAndConsent,
+      slotsKey: "flutter.study_slots_" + extensionSub,
+      studioKey,
+    },
+  );
+  await secondDevice.goto(url + "/#/planner", { waitUntil: "domcontentloaded" });
+  const renderedOnSecondDevice = async (word) => {
+    await secondDevice.evaluate(() =>
+      document.querySelector("flt-semantics-placeholder")?.click(),
+    );
+    return secondDevice.evaluate((word) => {
+      function find(root) {
+        for (const e of root.querySelectorAll("*")) {
+          if (e.shadowRoot && find(e.shadowRoot)) return true;
+          if (e.tagName.toLowerCase() === "flt-semantics" &&
+              [e.textContent, e.getAttribute("aria-label")].some((v) => v?.includes(word))) return true;
+        }
+        return false;
+      }
+      return find(document);
+    }, word);
+  };
+  await wait("second device reads Planner task from cloud", () =>
+    renderedOnSecondDevice(plannerSubject),
+  );
+  const remotePlannerCache = await wait("second device caches remote Planner task", async () =>
+    secondDevice.evaluate((key, id) => {
+      const rows = JSON.parse(JSON.parse(localStorage.getItem(key) || '"[]"'));
+      return rows.some((row) => row.id === id && row.dirty !== true);
+    }, "flutter.study_slots_" + extensionSub, plannerId),
+  );
+  assert.equal(remotePlannerCache, true);
+
+  await secondDevice.goto(url + "/#/echo-coach", { waitUntil: "domcontentloaded" });
+  await wait("second device downloads Studio summary", () =>
+    secondDevice.evaluate((key, id) => {
+      const records = JSON.parse(JSON.parse(localStorage.getItem(key) || '"{}"'));
+      return records[id]?.pending === false && records[id]?.focus_seconds === 120;
+    }, studioKey, sid),
+  );
+  console.log("PASS second browser context restored Planner and Studio from cloud");
+
+  await secondDevice.goto(url + "/#/recovery", { waitUntil: "domcontentloaded" });
+  await wait("second device reads Recovery Lab history", () =>
+    renderedOnSecondDevice("Example"),
+  );
+  await secondContext.close();
+  console.log("PASS second browser context reads Recovery Lab event from cloud", id);
 } finally {
   await browser?.close();
   server.close();

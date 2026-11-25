@@ -1,4 +1,9 @@
-import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
+import '../../features/workspaces/recovery_lab.dart';
+import '../../features/workspaces/echo_coach_page.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../features/focus_session/study_planner.dart';
+import '../../features/focus_session/focus_session_viewmodel.dart';
+import 'package:focus_echo_ai/core/widgets/workspace_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -110,6 +115,27 @@ class AppRouter {
           builder: (context, state) => const FocusSessionScreen(),
         ),
 
+        GoRoute(
+            path: '/planner',
+            builder: (context, state) => Consumer(
+                builder: (context, ref, _) => StudyPlanner(onStart: (task) {
+                      if (ref
+                          .read(focusSessionProvider.notifier)
+                          .selectTask(task)) {
+                        context.go(AppRoutes.focusSession);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            content: Text(
+                                'Finish the current session before starting another task.')));
+                      }
+                    }))),
+        GoRoute(path: '/recovery', builder: (_, __) => const RecoveryLab()),
+        GoRoute(
+            path: '/echo-coach',
+            builder: (_, route) => EchoCoachPage(
+                objective:
+                    route.extra is String ? route.extra as String : null)),
+        GoRoute(path: '/studio', redirect: (_, __) => AppRoutes.focusSession),
         // ── Main app shell with bottom navigation ──────────────────
         ShellRoute(
           navigatorKey: _shellNavigatorKey,
@@ -173,56 +199,9 @@ class MainShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final index = _currentIndex(context);
-    if (MediaQuery.sizeOf(context).width /
-            (MediaQuery.textScalerOf(context).scale(16) / 16) >=
-        900) {
-      const labels = ['Home', 'Analytics', 'Streaks & XP', 'Settings'];
-      const icons = [
-        Icons.home_outlined,
-        Icons.equalizer,
-        Icons.local_fire_department_outlined,
-        Icons.settings_outlined
-      ];
-      return Scaffold(
-          appBar: AppBar(
-              backgroundColor: const Color(0xff10142a),
-              title: Row(children: [
-                const FocusEchoBrand(),
-                const Spacer(),
-                for (var i = 0; i < _tabs.length; i++)
-                  Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      child: TextButton.icon(
-                          onPressed: () => context.go(_tabs[i]),
-                          icon: Icon(icons[i]),
-                          label: Text(labels[i]),
-                          style: TextButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              backgroundColor: i == index
-                                  ? const Color(0xff5335ab)
-                                  : Colors.transparent))),
-                const Spacer(),
-                IconButton(
-                    tooltip: "Account settings",
-                    onPressed: () => context.go(AppRoutes.settings),
-                    icon: const Icon(Icons.account_circle_outlined)),
-              ])),
-          body: child);
-    }
-
     return Scaffold(
       body: child,
-      appBar: AppBar(
-          automaticallyImplyLeading: false,
-          title: const FocusEchoBrand(),
-          actions: [
-            if (index != 3)
-              IconButton(
-                  tooltip: "Account settings",
-                  onPressed: () => context.go(AppRoutes.settings),
-                  icon: const Icon(Icons.account_circle_outlined))
-          ],
-          toolbarHeight: 46),
+      appBar: FocusWorkspaceAppBar(activePath: _tabs[index]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: index,
         height: 68,

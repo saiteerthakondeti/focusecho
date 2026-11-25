@@ -1,3 +1,5 @@
+import 'planned_focus.dart';
+import 'studio_time.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -69,7 +71,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
         if (!mounted) return;
         if (sessionMap != null) {
           _queueExtensionSessionAdoption(sessionMap);
-        } else if (state.isActive) {
+        } else if (state.isActive || onBreak) {
           unawaited(stopSession(fromExtension: true));
         }
       });
@@ -95,6 +97,134 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
   StreamSubscription<List<Map<String, dynamic>>>? _feedSubscription;
   Future<void> _extensionSessionAdoption = Future<void>.value();
   bool _stopInProgress = false;
+  bool _starting = false;
+  final _recoveringIds = <String>{};
+  int focusMinutes = 25, breakMinutes = 5;
+  String mode = 'Pomodoro';
+  void configureStudio(String choice, int focus, int rest) {
+    mode = choice;
+    focusMinutes = focus.clamp(1, 240);
+    breakMinutes = rest.clamp(1, 60);
+  }
+
+  String get clockKey => 'studio_clock_${plannerSessions.user}';
+  Map<String, dynamic> get clock {
+    final data =
+        jsonDecode(_prefs.getString(clockKey) ?? '{}') as Map<String, dynamic>;
+    return data['session'] == state.session?.id ? data : {};
+  }
+
+  int get plannedSeconds => (clock['minutes'] as int? ?? 25) * 60;
+  int get remainingSeconds =>
+      (plannedSeconds - state.elapsedSeconds + (clock['restart'] as int? ?? 0))
+          .clamp(0, plannedSeconds);
+  String get phase => state.session?.status == SessionStatus.abandoned
+      ? 'Cancelled'
+      : state.sessionSummary != null
+          ? 'Completed'
+          : onBreak
+              ? (_breakData['reason'] ?? 'On break')
+              : state.showAlert
+                  ? 'Distracted'
+                  : state.isActive
+                      ? (clock['recovering'] == true
+                          ? 'Recovering'
+                          : 'Focusing')
+                      : 'Idle';
+  DateTime? get breakEnds => onBreak
+      ? DateTime.parse(_breakData['since'])
+          .add(Duration(minutes: clock['rest'] as int? ?? 5))
+      : null;
+  Future<void> restartInterval() async {
+    if (!state.isActive) return;
+    await _prefs.setString(
+        clockKey,
+        jsonEncode({
+          ...clock,
+          'session': state.session!.id,
+          'restart': state.elapsedSeconds
+        }));
+    state = state.copyWith();
+  }
+
+  Future<void> reopenTask() async {
+    final session = state.session;
+    if (session == null || !state.isActive) return;
+    if (kIsWeb) {
+      _browserMonitor.reopenTask(session.id);
+    } else {
+      final package = activeTask?.apps.firstOrNull ?? session.productiveApp;
+      await _sessionChannel.invokeMethod<bool>('reopenTask', package);
+    }
+  }
+
+  Future<void> recordStrategy(String trigger) =>
+      _logIntervention(state.escalationLevel, 'lab:$trigger');
+
+  PlannedFocus? _selectedTask;
+  String? _selectionOwner;
+  PlannerSessions get plannerSessions =>
+      PlannerSessions(_prefs, _prefs.getString(AppKeys.userId) ?? 'local-user');
+  PlannedFocus? get selectedTask =>
+      _selectionOwner == plannerSessions.user ? _selectedTask : null;
+  bool selectTask(PlannedFocus task) {
+    if (state.isActive ||
+        _starting ||
+        state.session != null &&
+            state.session?.status != SessionStatus.abandoned &&
+            state.sessionSummary == null) return false;
+    _selectedTask = task;
+    _selectionOwner = plannerSessions.user;
+    state = state.copyWith(
+        intent: task.objective, sessionSummary: null, session: null);
+    return true;
+  }
+
+  PlannedFocus? get activeTask {
+    final session = state.session;
+    if (session == null || session.userId != plannerSessions.user) return null;
+    return plannerSessions.task(session.id);
+  }
+
+  Future<void> finishCurrentStep() async {
+    final task = activeTask, session = state.session;
+    if (!state.isActive ||
+        task == null ||
+        session == null ||
+        task.remaining.isEmpty) return;
+    final remaining = task.remaining.skip(1).toList();
+    final updated = PlannedFocus(
+        task.id,
+        task.subject,
+        remaining.firstOrNull ?? '',
+        task.minutes,
+        task.apps,
+        task.sites,
+        remaining);
+    await plannerSessions.link(session.id, updated);
+    final scope = _supabaseService?.currentUser?.id ?? 'guest';
+    final key = 'study_slots_$scope';
+    final slots = (jsonDecode(_prefs.getString(key) ?? '[]') as List)
+        .cast<Map<String, dynamic>>();
+    for (final row
+        in slots.where((r) => r['id'] == task.id && r['deleted'] != true)) {
+      final details = Map<String, dynamic>.from(row['details'] ?? {});
+      details['done'] =
+          {...PlannedFocus.strings(details['done']), task.nextStep}.toList();
+      row['details'] = details;
+      row['dirty'] = true;
+      await _prefs.setString(key, jsonEncode(slots));
+    }
+    if (state.session?.id != session.id) return;
+    await _prefs.setString(AppKeys.sessionIntent, updated.objective);
+    if (kIsWeb) _browserMonitor.updateObjective(session.id, updated.objective);
+    state = state.copyWith(intent: updated.objective);
+  }
+
+  void detachTask() {
+    _selectedTask = null;
+    state = state.copyWith(intent: '');
+  }
 
   SupabaseService? get _supabaseService {
     if (_supabaseServiceOverride != null) return _supabaseServiceOverride;
@@ -263,6 +393,15 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
       final escalationLevel = (map['escalation_level'] as num?)?.toInt() ?? 1;
 
       // Feature 2 — intervention lifecycle events emitted by the native layer.
+      if (eventType == 'sustained_return') {
+        final id = state.lastEventId;
+        if (id != null && state.isActive) {
+          await _logIntervention(
+              state.escalationLevel, 'sustained:$id:${map['seconds']}');
+        }
+        await _ackNativeEvent(deliveryId);
+        return;
+      }
       if (eventType == 'intervention_shown' ||
           eventType == 'intervention_action') {
         await _handleNativeInterventionEvent(eventType, map);
@@ -336,6 +475,20 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
       {String intent = '',
       bool strict = false,
       List<String> allowed = const []}) async {
+    if (_starting || state.isActive || onBreak) return;
+    _starting = true;
+    try {
+      await _startSession(productiveApp,
+          intent: intent, strict: strict, allowed: allowed);
+    } finally {
+      _starting = false;
+    }
+  }
+
+  Future<void> _startSession(String productiveApp,
+      {required String intent,
+      required bool strict,
+      required List<String> allowed}) async {
     // Feature 1 — a session cannot start without a stated intent.
     final trimmedIntent = intent.trim();
     if (trimmedIntent.isEmpty) {
@@ -362,6 +515,17 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     FELog.i('FocusSession',
         'Starting session ${session.id} (intent: "$trimmedIntent", app: $productiveApp, user: $userId)');
     await _sessionDao.insertSession(session);
+    await _prefs.setString(
+        clockKey,
+        jsonEncode({
+          'session': session.id,
+          'mode': mode,
+          'minutes': focusMinutes,
+          'rest': breakMinutes
+        }));
+    final task = selectedTask;
+    if (task != null) await plannerSessions.link(session.id, task);
+    _selectedTask = null;
     _requestSync();
     // Persist the intent so the native layer can show it on full-screen
     // interventions (Feature 2).
@@ -383,6 +547,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
         sessionSiteSnapshot,
         strict: strict,
         allowed: allowed,
+        recoverySeconds: _prefs.getInt('recovery_duration') ?? 10,
         sessionId: session.id,
         intention: trimmedIntent,
         userId: userId,
@@ -394,11 +559,12 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
 
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      state = state.copyWith(elapsedSeconds: state.elapsedSeconds + 1);
+      state = state.copyWith(elapsedSeconds: _elapsed(session));
     });
 
     state = state.copyWith(
       isActive: true,
+      elapsedSeconds: 0,
       session: session,
       distractionCount: 0,
       sessionXp: 0,
@@ -448,7 +614,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     final sessionId = sessionMap['session_id']?.toString();
     if (sessionId == null || sessionId.isEmpty) return;
 
-    if (state.isActive && state.session?.id == sessionId) {
+    if ((state.isActive || onBreak) && state.session?.id == sessionId) {
       final extensionCount =
           (sessionMap['distraction_count'] as num?)?.toInt() ?? 0;
       if (extensionCount > state.distractionCount) {
@@ -500,7 +666,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
-        state = state.copyWith(elapsedSeconds: state.elapsedSeconds + 1);
+        state = state.copyWith(elapsedSeconds: _elapsed(session));
       }
     });
 
@@ -521,6 +687,11 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
       lastEventId: null,
     );
 
+    if (onBreak) {
+      _timer?.cancel();
+      state =
+          state.copyWith(isActive: false, elapsedSeconds: _elapsed(session));
+    }
     await _sessionDao.insertSessionIfAbsent(session);
     _requestSync();
     unawaited(_subscribeToLiveFeed(sessionId));
@@ -549,31 +720,40 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
 
     // Compute how many seconds have elapsed since the session started,
     // accounting for the time the process was dead.
-    final alreadyElapsed =
-        DateTime.now().difference(session.startTime).inSeconds;
+    if (session.userId != plannerSessions.user) return false;
+    final alreadyElapsed = _elapsed(session);
 
     _engine.reset();
     _engine.configure(_buildConfig(session.productiveApp));
 
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      state = state.copyWith(elapsedSeconds: state.elapsedSeconds + 1);
+      state = state.copyWith(elapsedSeconds: _elapsed(session));
     });
 
+    final recorded = (await _eventDao.getEventsForSession(session.id))
+        .where((e) => e.eventType == "distraction")
+        .toList();
     state = state.copyWith(
       isActive: true,
       session: session,
       elapsedSeconds: alreadyElapsed,
-      distractionCount: 0,
-      sessionXp: 0,
-      intent: session.intent,
-      escalationLevel: 1,
+      distractionCount: recorded.length,
+      parkedItems: session.parkedItems ?? const [],
+      sessionXp: recorded.where((e) => e.isRecovered).fold<int>(
+          0, (sum, e) => sum + _recoveryXp(e.recoveryTimeSeconds ?? 0)),
+      intent: plannerSessions.task(session.id)?.objective ?? session.intent,
+      escalationLevel: _levelForRelapse(recorded.length),
       sessionSummary: null,
       liveDistractionFeed: const [],
       sessionSummaryStats: null,
       crossSurfaceNudge: null,
     );
 
+    if (onBreak) {
+      _timer?.cancel();
+      state = state.copyWith(isActive: false);
+    }
     debugPrint(
       '[FocusSession] Resumed session ${session.id} '
       '(${session.productiveApp}, already ${alreadyElapsed}s elapsed).',
@@ -708,58 +888,78 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     return 3;
   }
 
-  Future<void> onRecovery(String eventId,
-      {bool returnedToOrigin = false, int? timeAwaySeconds}) async {
-    if (kIsWeb) WebNotificationService.instance.clear();
-    try {
-      final events =
-          await _eventDao.getEventsForSession(state.session?.id ?? '');
-      final event = events.where((e) => e.id == eventId).firstOrNull;
-      if (event == null) {
-        FELog.w('FocusSession',
-            'Recovery event $eventId not found in session, dismissing alert');
-        state = state.copyWith(showAlert: false);
-        return;
-      }
-      final seconds = timeAwaySeconds ??
-          DateTime.now().difference(event.triggeredAt).inSeconds;
-      await _eventDao.updateRecovery(
-        eventId,
-        DateTime.now(),
-        seconds,
-        returnedToOrigin: returnedToOrigin,
-      );
-      // Feature 3 — the recovered row must be re-pushed so Supabase gets the
-      // returned_at (recovered_at) backfill even if the original event was
-      // already synced before the user returned.
-      await _eventDao.markAsUnsynced(eventId);
-      final gained = seconds < AppRiskThresholds.mediumRecoverySeconds
+  int _recoveryXp(int seconds) =>
+      seconds < AppRiskThresholds.mediumRecoverySeconds
           ? AppXP.recoveryXp
           : AppXP.slowRecoveryXp;
-      FELog.i(
-        'FocusSession',
-        'Recovery completed for $eventId: away=${seconds}s, gainedXP=+$gained, returned=$returnedToOrigin',
-      );
-      state =
-          state.copyWith(sessionXp: state.sessionXp + gained, showAlert: false);
-      unawaited(_syncService.syncPendingEvents());
-    } catch (e, st) {
-      FELog.e('FocusSession', 'Error during recovery: $eventId', e, st);
-      state = state.copyWith(showAlert: false);
+
+  Future<void> onRecovery(String eventId,
+      {bool returnedToOrigin = false, int? timeAwaySeconds}) async {
+    if (!_recoveringIds.add(eventId)) return;
+    try {
+      if (kIsWeb) WebNotificationService.instance.clear();
+      try {
+        final events =
+            await _eventDao.getEventsForSession(state.session?.id ?? '');
+        final event = events.where((e) => e.id == eventId).firstOrNull;
+        if (event?.isRecovered == true) return;
+        if (event == null) {
+          FELog.w('FocusSession',
+              'Recovery event $eventId not found in session, dismissing alert');
+          state = state.copyWith(showAlert: false);
+          return;
+        }
+        if (event.isRecovered ||
+            event.sessionId != state.session?.id ||
+            !state.isActive) return;
+        final seconds = timeAwaySeconds ??
+            DateTime.now().difference(event.triggeredAt).inSeconds;
+        await _eventDao.updateRecovery(
+          eventId,
+          DateTime.now(),
+          seconds,
+          returnedToOrigin: returnedToOrigin,
+        );
+        // Feature 3 — the recovered row must be re-pushed so Supabase gets the
+        // returned_at (recovered_at) backfill even if the original event was
+        // already synced before the user returned.
+        await _eventDao.markAsUnsynced(eventId);
+        await _prefs.setString(
+            clockKey,
+            jsonEncode(
+                {...clock, 'session': state.session?.id, 'recovering': false}));
+        final gained = _recoveryXp(seconds);
+        FELog.i(
+          'FocusSession',
+          'Recovery completed for $eventId: away=${seconds}s, gainedXP=+$gained, returned=$returnedToOrigin',
+        );
+        state = state.copyWith(
+            sessionXp: state.sessionXp + gained, showAlert: false);
+        unawaited(_syncService.syncPendingEvents());
+      } catch (e, st) {
+        FELog.e('FocusSession', 'Error during recovery: $eventId', e, st);
+        state = state.copyWith(showAlert: false);
+      }
+    } finally {
+      _recoveringIds.remove(eventId);
     }
   }
 
-  Future<void> stopSession({bool fromExtension = false}) async {
-    if (_stopInProgress) return;
+  Future<void> stopSession(
+      {bool fromExtension = false, bool cancel = false}) async {
+    if (_stopInProgress ||
+        state.sessionSummary != null ||
+        state.session?.status == SessionStatus.abandoned) return;
     _stopInProgress = true;
     try {
-      await _stopSessionInternal(fromExtension: fromExtension);
+      await _stopSessionInternal(fromExtension: fromExtension, cancel: cancel);
     } finally {
       _stopInProgress = false;
     }
   }
 
-  Future<void> _stopSessionInternal({required bool fromExtension}) async {
+  Future<void> _stopSessionInternal(
+      {required bool fromExtension, required bool cancel}) async {
     if (kIsWeb) WebNotificationService.instance.clear();
     final session = state.session;
     if (session == null) return;
@@ -806,13 +1006,22 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
           'focusScore=$focusScore, sessionXp=$finalSessionXp',
     );
 
+    final ended = DateTime.now();
+    final times = studioTime(
+        session.startTime,
+        ended,
+        distractionEvents,
+        _breakData['session'] == session.id ? _breakData : {},
+        Map<String, dynamic>.from(clock['returns'] ?? {}));
+    await plannerSessions.finish(
+        session.id, times, clock['mode'] as String? ?? mode, cancel);
     await _sessionDao.updateSessionEnd(
       session.id,
-      DateTime.now(),
+      ended,
       totalDistractions,
-      finalSessionXp,
+      cancel ? 0 : finalSessionXp,
       focusScore,
-      SessionStatus.completed.name,
+      cancel ? SessionStatus.abandoned.name : SessionStatus.completed.name,
     );
     if (!kIsWeb) {
       await _sessionChannel.invokeMethod<void>('stopSession');
@@ -822,7 +1031,18 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     _requestSync();
     await _prefs.setBool(AppKeys.sessionActive, false);
     await _prefs.remove(AppKeys.sessionIntent);
+    await _prefs.remove(_breakKey);
+    await _prefs.remove(clockKey);
 
+    if (cancel) {
+      _unsubscribeCrossSurface();
+      _engine.reset();
+      state = FocusSessionState(
+          session: session.copyWith(status: SessionStatus.abandoned),
+          availableProductiveApps: state.availableProductiveApps,
+          selectedProductiveApp: state.selectedProductiveApp);
+      return;
+    }
     // MOB-3f — Wire updateUserXP: accumulate running lifetime XP in prefs
     // (offline-safe source of truth), then push to Supabase when signed in.
     final prevTotalXp = _prefs.getInt(AppKeys.xpTotal) ?? 0;
@@ -863,6 +1083,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
       isActive: false,
       sessionSummaryStats: {
         'duration_seconds': state.elapsedSeconds,
+        ...times,
         'distraction_count': state.distractionCount,
         'median_recovery_seconds': medianRecoverySeconds(feed),
         'focus_score': focusScore,
@@ -1040,6 +1261,19 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
   /// Feature 2 — user chose "Return to Focus" on an intervention.
   void returnToFocusFromIntervention() {
     state = state.copyWith(showAlert: false);
+    if (state.session != null && state.lastEventId != null)
+      unawaited(_prefs.setString(
+          clockKey,
+          jsonEncode({
+            ...clock,
+            'session': state.session!.id,
+            'recovering': true,
+            'returns': {
+              ...?clock['returns'] as Map?,
+              state.lastEventId!: clock['returns']?[state.lastEventId!] ??
+                  DateTime.now().toIso8601String()
+            }
+          })));
     unawaited(_logIntervention(state.escalationLevel, 'return_to_focus'));
   }
 
@@ -1047,12 +1281,13 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
   void takeBreakFromIntervention() {
     state = state.copyWith(showAlert: false);
     unawaited(_logIntervention(state.escalationLevel, 'take_break'));
+    unawaited(_pauseSessionForBreak());
   }
 
   /// Feature 2 — user chose "Pause Session" (level 3+ forced choice).
   Future<void> pauseSessionFromIntervention() async {
     unawaited(_logIntervention(state.escalationLevel, 'pause_session'));
-    await stopSession();
+    await pauseStudio();
   }
 
   /// Logs an intervention row (Feature 2). [actionTaken] is one of:
@@ -1095,7 +1330,9 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     // succeeds; the native staging row is retained for retry on failure.
     await _interventionDao.insertEvent(event);
     if (eventType == 'intervention_action') {
-      if (action == 'pause_session' || action == 'end_session') {
+      if (action == 'pause_session') {
+        await pauseStudio();
+      } else if (action == 'end_session') {
         await stopSession();
       } else if (action == 'return_to_focus') {
         state = state.copyWith(showAlert: false);
@@ -1109,9 +1346,74 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
   /// native detection service stop, and the UI returns to the setup view.
   /// The session row is intentionally left open (no end_time, status stays
   /// 'active') so a future resume feature can continue the same session.
-  Future<void> _pauseSessionForBreak() async {
-    if (!state.isActive) return;
-    if (kIsWeb) WebNotificationService.instance.clear();
+  String get _breakKey => 'session_break_${plannerSessions.user}';
+  Map<String, dynamic> get _breakData =>
+      jsonDecode(_prefs.getString(_breakKey) ?? '{}');
+  bool get onBreak =>
+      state.session != null &&
+      _breakData['session'] == state.session!.id &&
+      _breakData['since'] != null;
+  int _elapsed(FocusSession session) {
+    final data = _breakData;
+    final matches = data['session'] == session.id;
+    final until = matches && data['since'] != null
+        ? DateTime.parse(data['since'])
+        : DateTime.now();
+    return (until.difference(session.startTime).inSeconds -
+            (matches ? data['seconds'] as int? ?? 0 : 0))
+        .clamp(0, 1 << 31);
+  }
+
+  Future<void> resumeBreak() async {
+    final session = state.session;
+    if (session == null || !onBreak) return;
+    final data = _breakData;
+    if (kIsWeb) {
+      _browserMonitor.setBreak(session.id, false);
+    } else {
+      await _sessionChannel.invokeMethod<void>('startSession');
+    }
+    data['windows'] = [
+      ...?data['windows'] as List?,
+      {
+        'since': data['since'],
+        'until': DateTime.now().toIso8601String(),
+        'reason': data['reason']
+      }
+    ];
+    data['seconds'] = (data['seconds'] as int? ?? 0) +
+        DateTime.now()
+            .difference(DateTime.parse(data.remove('since')))
+            .inSeconds;
+    await _prefs.setString(_breakKey, jsonEncode(data));
+    await _prefs.setBool(AppKeys.sessionActive, true);
+    _engine.reset();
+    _engine.configure(_buildConfig(session.productiveApp));
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1),
+        (_) => state = state.copyWith(elapsedSeconds: _elapsed(session)));
+    state = state.copyWith(
+        isActive: true, showAlert: false, elapsedSeconds: _elapsed(session));
+  }
+
+  Future<void> pauseStudio() => _pauseSessionForBreak(reason: 'Paused');
+  Future<void> _pauseSessionForBreak({String reason = 'On break'}) async {
+    if (!state.isActive || state.session == null || onBreak) return;
+    final session = state.session!;
+    final data = _breakData;
+    await _prefs.setString(
+        _breakKey,
+        jsonEncode({
+          'session': session.id,
+          'windows': data['session'] == session.id ? data['windows'] ?? [] : [],
+          'seconds': data['session'] == session.id ? data['seconds'] ?? 0 : 0,
+          'reason': reason,
+          'since': DateTime.now().toIso8601String()
+        }));
+    if (kIsWeb) {
+      _browserMonitor.setBreak(session.id, true);
+      WebNotificationService.instance.clear();
+    }
     _timer?.cancel();
     state = state.copyWith(showAlert: false, isActive: false);
     if (!kIsWeb) {
@@ -1133,7 +1435,11 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
     final distractingApps = _decodeStringList(distractingRaw);
     final timeLimits = _decodeIntMap(limitsRaw);
 
+    final shieldApps = _prefs.getBool('strict_focus') == true
+        ? _decodeStringList(_prefs.getString('strict_allowed') ?? '[]')
+        : const <String>[];
     final alwaysAllowed = {
+      ...shieldApps,
       ..._defaultAlwaysAllowed,
       ...productiveApps,
       focusApp
@@ -1147,7 +1453,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
       focusApp: focusApp,
       alwaysAllowedApps: alwaysAllowed,
       allowedWithLimitApps: _defaultAllowedWithLimit,
-      alwaysDistractionApps: alwaysDistraction,
+      alwaysDistractionApps: alwaysDistraction.difference(shieldApps.toSet()),
       neutralApps: _defaultNeutralApps,
       timeLimitsSeconds: timeLimits,
       gracePeriodMs: AppDurations.gracePeriodMs,
@@ -1189,7 +1495,12 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
       return;
     }
     final kind = activity.kind;
-    if (kind == 'distraction') {
+    if (kind == 'sustained_return' &&
+        activity.eventId == state.lastEventId &&
+        activity.timeAwaySeconds != null) {
+      await _logIntervention(state.escalationLevel,
+          'sustained:${activity.eventId}:${activity.timeAwaySeconds}');
+    } else if (kind == 'distraction') {
       await onDistractionDetected(
         'web:${activity.host}',
         activity.host,
@@ -1197,9 +1508,7 @@ class FocusSessionViewModel extends StateNotifier<FocusSessionState> {
         eventId: activity.eventId?.isNotEmpty == true ? activity.eventId : null,
         triggeredAt: activity.timestamp,
       );
-    } else if (kind == 'return' &&
-        state.showAlert &&
-        state.lastEventId != null) {
+    } else if (kind == 'return' && state.lastEventId != null) {
       await onRecovery(
         activity.eventId?.isNotEmpty == true
             ? activity.eventId!

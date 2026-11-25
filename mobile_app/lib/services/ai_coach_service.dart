@@ -87,6 +87,8 @@ class AiCoachService {
     }
   }
 
+  String? get currentOwner => _supabase?.auth.currentUser?.id;
+
   Dio get _dio {
     final token = _supabase?.auth.currentSession?.accessToken;
     final options = BaseOptions(
@@ -99,6 +101,31 @@ class AiCoachService {
       },
     );
     return Dio(options);
+  }
+
+  Future<({List<String> steps, bool fallback})> draftTask(
+      String objective) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+        '/api/v1/coach/task-draft',
+        data: {'raw_intention': objective});
+    final data = response.data!;
+    return (
+      steps: List<String>.from(data['steps']),
+      fallback: data['is_fallback'] == true
+    );
+  }
+
+  Future<({String advice, bool fallback, int samples})> advice(
+      String question, String? previous) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+        '/api/v1/coach/advice',
+        data: {'question': question, 'previous_question': previous});
+    final data = response.data!;
+    return (
+      advice: data['advice'] as String,
+      fallback: data['is_fallback'] == true,
+      samples: data['sessions_analyzed'] as int
+    );
   }
 
   /// Check whether user has opted into EchoCoach

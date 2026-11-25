@@ -17,12 +17,16 @@ class BrowserMonitor {
   Future<void> initialize() async {}
   Future<void> startSession(
     List<String> distractingSites, {
+    int recoverySeconds = 10,
     bool strict = false,
     List<String> allowed = const [],
     String? sessionId,
     String? intention,
     String? userId,
   }) async {}
+  void reopenTask(String id) {}
+  void updateObjective(String sessionId, String objective) {}
+  void setBreak(String sessionId, bool paused) {}
   Future<void> stopSession() async {}
 
   void updateParkedItems(List<String> items) {}

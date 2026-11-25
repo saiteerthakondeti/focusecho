@@ -11,6 +11,7 @@ import '../core/models/intervention_event.dart';
 import '../core/models/user_profile.dart';
 import '../core/constants/app_constants.dart';
 import 'focus_preferences_conflict.dart';
+import '../features/focus_session/planned_focus.dart';
 
 class SupabaseService {
   SupabaseService({SupabaseClient? client}) : _client = client ?? _tryClient();
@@ -41,8 +42,9 @@ class SupabaseService {
   Future<bool> upsertFocusSession(FocusSession session) async {
     final client = _client;
     final authUserId = client?.auth.currentUser?.id;
-    if (client == null || authUserId == null) return false;
-    final row = session.toSqliteMap()..['user_id'] = authUserId;
+    if (client == null || authUserId == null || session.userId != authUserId)
+      return false;
+    final row = session.toSqliteMap();
     final parked = row['parked_items'];
     if (parked is String) {
       try {
@@ -72,6 +74,114 @@ class SupabaseService {
       await client.from('focus_sessions').upsert(legacy);
       return false;
     }
+  }
+
+  static final _plannerQueues = <String, Future<void>>{};
+
+  Future<void> syncPlanner(SharedPreferences prefs) async {
+    final client = _client, owner = currentUser?.id;
+    if (client == null || owner == null) return;
+    bool allowed() =>
+        currentUser?.id == owner &&
+        prefs.getBool(AppKeys.localOnlyMode) != true &&
+        prefs.getBool(AppKeys.syncEnabled) != false;
+    final key = 'study_slots_$owner';
+    List<Map<String, dynamic>> read() =>
+        (jsonDecode(prefs.getString(key) ?? '[]') as List)
+            .cast<Map<String, dynamic>>();
+    Future<void> run() async {
+      if (!allowed()) return;
+      for (final row in read().where((r) => r['dirty'] == true)) {
+        if (!allowed()) return;
+        if (row['deleted'] == true) {
+          await client
+              .from('study_slots')
+              .delete()
+              .eq('id', row['id'])
+              .eq('user_id', owner);
+        } else {
+          await client
+              .from('study_slots')
+              .upsert({...row, 'user_id': owner}..remove('dirty'));
+        }
+        if (!allowed()) return;
+        final latest = read();
+        final current = latest.where((r) => r['id'] == row['id']).firstOrNull;
+        if (jsonEncode(row) == jsonEncode(current) && current != null) {
+          current.remove('dirty');
+          await prefs.setString(key, jsonEncode(latest));
+        }
+      }
+      if (!allowed()) return;
+      final remote = <String, dynamic>{};
+      String? cursor;
+      while (allowed()) {
+        var query = client.from('study_slots').select().eq('user_id', owner);
+        if (cursor != null) query = query.gt('id', cursor);
+        final page = await query.order('id').limit(200);
+        for (final row in page) {
+          remote[row['id']] = row;
+        }
+        if (page.length < 200) break;
+        cursor = page.last['id'] as String;
+      }
+      if (!allowed()) return;
+      for (final row in read().where((r) => r['dirty'] == true)) {
+        remote[row['id']] = row;
+      }
+      await prefs.setString(key, jsonEncode(remote.values.toList()));
+    }
+
+    final previous = _plannerQueues[key];
+    final next = (previous ?? Future<void>.value())
+        .catchError((_) {})
+        .then((_) => run());
+    _plannerQueues[key] = next;
+    try {
+      await next;
+    } finally {
+      if (identical(_plannerQueues[key], next)) _plannerQueues.remove(key);
+    }
+  }
+
+  Future<void> syncStudio(SharedPreferences prefs) async {
+    final client = _client, owner = currentUser?.id;
+    if (client == null || owner == null) return;
+    bool allowed() =>
+        currentUser?.id == owner &&
+        prefs.getBool(AppKeys.localOnlyMode) != true &&
+        prefs.getBool(AppKeys.syncEnabled) != false;
+    await PlannerSessions(prefs, owner).synchronize(
+        allowed: allowed,
+        upload: (id, snapshot) async {
+          final rows = await client
+              .from('focus_sessions')
+              .update({'studio_summary': snapshot})
+              .eq('id', id)
+              .eq('user_id', owner)
+              .select('id');
+          return rows.isNotEmpty;
+        },
+        download: () async {
+          final summaries = <String, dynamic>{};
+          String? cursor;
+          while (allowed()) {
+            var query = client
+                .from('focus_sessions')
+                .select('id,studio_summary')
+                .eq('user_id', owner)
+                .not('studio_summary', 'is', null);
+            if (cursor != null) query = query.gt('id', cursor);
+            final rows = await query.order('id').limit(200);
+            for (final row in rows) {
+              if (row['studio_summary'] is Map)
+                summaries[row['id']] = row['studio_summary'];
+            }
+            if (rows.length < 200) break;
+            cursor = rows.last['id'] as String;
+          }
+          return summaries;
+        });
   }
 
   Future<void> upsertInterventionEvent(InterventionEvent event) async {

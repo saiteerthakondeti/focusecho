@@ -8,12 +8,36 @@
 
 ### Hosted extension analytics verification · 2026-11-25
 
-**Passed** with the unpacked extension in Chrome for Testing and the Flutter web
-dashboard served on localhost against hosted Supabase. The test account began
-with an empty chart. Visiting `example.org` generated event
-`3dbbb9f8-98a2-4e7e-a063-0ef958bfeafe`. The authenticated database query and
-the Analytics page's network response both returned that ID, and Analytics
-rendered `example.org`. The deployed Vercel dashboard remains unverified.
+**Passed** in local Edge Chromium against hosted Supabase using a temporary
+anonymous test identity. Visiting `example.org` generated event
+`d978eae8-7ab8-49fb-9567-f5d5f1ae5e97`; the authenticated database query and
+Analytics response returned that same ID, and the page rendered `Example`.
+The test also uploaded Planner row
+`c6943881-814e-49ca-806c-164302ac28a5` and a Deep Work Studio summary for
+session `97f29e9a-8aaa-4128-9d37-cdf01fb3de4a`. A second isolated browser
+context with the same test identity and empty Planner/Studio caches restored
+both records from Supabase and Recovery Lab displayed the distraction event.
+The migration's `study_slots.details` and `focus_sessions.studio_summary`
+columns were visible in the SQL Editor result supplied by the user. The
+deployed Vercel dashboard and physical Android behavior remain unverified.
+
+Local checks after the sync changes: Flutter **401/401**, backend **400/400**,
+extension suite passed (state machine **349**, DB sync **38**, manifest **21**,
+desktop notifications **4**, replay **9/9**); release web and debug APK builds
+succeeded. `flutter analyze --no-pub --no-fatal-infos` exited successfully with
+38 informational lints. The production Vercel deployment and physical Android
+behavior remain unverified; no Android device was available for installation.
+
+### Focus workspace UI · 2026-11-25
+
+Added the responsive shared workspace navigation and rebuilt Focus Planner,
+Focus Studio, Recovery Lab, and EchoCoach AI in the reference dark navy, cyan,
+and purple visual style. The Planner test now scrolls to its completion action
+before tapping it. Verification: Flutter **401/401**, targeted Dart analysis
+**0 errors** (23 informational lints), and `flutter build web --release
+--dart-define-from-file=../dart_defines.json` succeeded. Flutter reported the
+existing web Wasm compatibility and Cupertino icon-font warnings. Physical
+Android and deployed Vercel rendering remain unverified.
 
 To repeat with a web build configured for a test project that permits anonymous
 sign-in, run `node browser_extension/tests/hosted-analytics-smoke.mjs` from the

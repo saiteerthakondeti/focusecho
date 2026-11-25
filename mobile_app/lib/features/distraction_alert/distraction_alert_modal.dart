@@ -14,12 +14,14 @@ class DistractionAlertModal extends StatefulWidget {
     required this.appName,
     required this.packageName,
     required this.riskScore,
+    this.taskContext,
   });
 
   final VoidCallback onRecovery;
   final VoidCallback onEndSession;
   final VoidCallback onStreakPenalty;
   final VoidCallback onSnooze;
+  final String? taskContext;
   final String appName;
   final String packageName;
   final String riskScore;
@@ -95,6 +97,9 @@ class _DistractionAlertModalState extends State<DistractionAlertModal>
               Text('Still focused after ${widget.appName}?',
                   style: AppTextStyles.bodyLarge),
               const SizedBox(height: 8),
+              if (widget.taskContext != null)
+                Text(widget.taskContext!,
+                    maxLines: 3, overflow: TextOverflow.ellipsis),
               Chip(
                 backgroundColor: color.withValues(alpha: 0.25),
                 label: Text(widget.riskScore),
@@ -125,9 +130,6 @@ class _DistractionAlertModalState extends State<DistractionAlertModal>
                   onPressed: () {
                     widget.onRecovery();
                     Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('+25 XP')),
-                    );
                   },
                   child: const Text("I'm Back! 🎯"),
                 ),

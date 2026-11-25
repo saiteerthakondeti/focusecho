@@ -10,6 +10,8 @@ from ...schemas.coach import (
     CoachOptInResponse,
     IntentionRefineRequest,
     IntentionRefineResponse,
+    TaskDraft,
+    CoachQuestion, CoachAnswer,
     SessionDebriefRequest,
     SessionDebriefResponse,
 )
@@ -55,6 +57,24 @@ def refine_intention(
     Non-blocking, debounced on client, rule fallback on any error.
     """
     return service.refine_intention(payload.raw_intention, authed_user)
+
+
+@router.post("/advice", response_model=CoachAnswer)
+def get_advice(
+    payload: CoachQuestion,
+    authed_user: Annotated[str, Depends(require_auth)],
+    service: Annotated[AiCoachService, Depends(_service)],
+) -> CoachAnswer:
+    return service.advise(payload, authed_user)
+
+
+@router.post("/task-draft", response_model=TaskDraft)
+def draft_task(
+    payload: IntentionRefineRequest,
+    authed_user: Annotated[str, Depends(require_auth)],
+    service: Annotated[AiCoachService, Depends(_service)],
+) -> TaskDraft:
+    return service.draft_task(payload.raw_intention, authed_user)
 
 
 @router.post("/session-debrief", response_model=SessionDebriefResponse)

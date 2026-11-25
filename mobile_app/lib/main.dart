@@ -24,25 +24,28 @@ import 'services/fcm_service.dart';
 import 'services/nightly_sync_worker.dart';
 import 'services/supabase_service.dart';
 import 'services/sync_service.dart';
+import 'services/workspace_data_migration.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
   var supabaseReady = false;
-  if (AppConfig.supabaseUrl.isNotEmpty && AppConfig.supabaseAnonKey.isNotEmpty) {
+  if (AppConfig.supabaseUrl.isNotEmpty &&
+      AppConfig.supabaseAnonKey.isNotEmpty) {
     try {
       await Supabase.initialize(
           url: AppConfig.supabaseUrl, anonKey: AppConfig.supabaseAnonKey);
       supabaseReady = true;
     } catch (e, st) {
-      FELog.e('Supabase', 'Supabase Init Failed: $e. Using offline mode.', e, st);
+      FELog.e(
+          'Supabase', 'Supabase Init Failed: $e. Using offline mode.', e, st);
     }
   } else {
     FELog.e(
       'Config',
       'FATAL CONFIGURATION ERROR: SUPABASE_URL or SUPABASE_ANON_KEY is missing! '
-      'The app was built without environment variables or dart_defines.json. '
-      'Auth and sync operations will be unavailable.',
+          'The app was built without environment variables or dart_defines.json. '
+          'Auth and sync operations will be unavailable.',
     );
   }
 
@@ -101,10 +104,18 @@ Future<void> main() async {
   }
   final previousId = prefs.getString(AppKeys.userId);
   if (currentUser != null) {
+    final previousWasGuest = previousId == 'local-user' ||
+        previousId == prefs.getString(AppKeys.anonymousUserId);
     await prefs.setString(AppKeys.userId, currentUser.id);
     if (previousId != null && previousId != currentUser.id) {
       await _migrateLocalUserToAuthId(
-          sessionDao, eventDao, previousId, currentUser.id);
+          sessionDao, eventDao, previousId, currentUser.id,
+          fromGuestIdentity: previousWasGuest);
+    }
+    if (currentUser.isAnonymous) {
+      await prefs.setString(AppKeys.anonymousUserId, currentUser.id);
+    } else {
+      await prefs.remove(AppKeys.anonymousUserId);
     }
   } else {
     await prefs.setString(AppKeys.userId, 'local-user');
@@ -165,10 +176,18 @@ Future<void> main() async {
               event == AuthChangeEvent.tokenRefreshed) &&
           user != null) {
         final previousId = prefs.getString(AppKeys.userId);
+        final previousWasGuest = previousId == 'local-user' ||
+            previousId == prefs.getString(AppKeys.anonymousUserId);
         await prefs.setString(AppKeys.userId, user.id);
         if (previousId != null && previousId != user.id) {
           await _migrateLocalUserToAuthId(
-              sessionDao, eventDao, previousId, user.id);
+              sessionDao, eventDao, previousId, user.id,
+              fromGuestIdentity: previousWasGuest);
+        }
+        if (user.isAnonymous) {
+          await prefs.setString(AppKeys.anonymousUserId, user.id);
+        } else {
+          await prefs.remove(AppKeys.anonymousUserId);
         }
         unawaited(syncService.syncPendingEvents());
         if (kIsWeb) {
@@ -184,6 +203,7 @@ Future<void> main() async {
           final anonymousUser = response.user;
           if (anonymousUser != null) {
             await prefs.setString(AppKeys.userId, anonymousUser.id);
+            await prefs.setString(AppKeys.anonymousUserId, anonymousUser.id);
             if (kIsWeb) {
               BrowserMonitor.instance.syncCredentialsIfAvailable();
             }
@@ -217,18 +237,19 @@ class FocusEchoApp extends StatelessWidget {
   }
 }
 
-Future<void> _migrateLocalUserToAuthId(
-  FocusSessionDao sessionDao,
-  DistractionEventDao eventDao,
-  String fromUserId,
-  String authUserId,
-) async {
+Future<void> _migrateLocalUserToAuthId(FocusSessionDao sessionDao,
+    DistractionEventDao eventDao, String fromUserId, String authUserId,
+    {required bool fromGuestIdentity}) async {
+  if (!fromGuestIdentity || fromUserId == authUserId) return;
   final sessions = await sessionDao.getSessionHistory(10000);
   final sessionIds =
       sessions.where((s) => s.userId == fromUserId).map((s) => s.id).toList();
-  if (sessionIds.isEmpty) return;
-  await sessionDao.reassignUserId(fromUserId, authUserId);
-  await eventDao.markEventsUnsyncedForSessions(sessionIds);
+  if (sessionIds.isNotEmpty) {
+    await sessionDao.reassignUserId(fromUserId, authUserId);
+    await eventDao.markEventsUnsyncedForSessions(sessionIds);
+  }
+  final prefs = await SharedPreferences.getInstance();
+  await migrateWorkspacePreferences(prefs, fromUserId, authUserId);
 }
 
 // ---------------------------------------------------------------------------

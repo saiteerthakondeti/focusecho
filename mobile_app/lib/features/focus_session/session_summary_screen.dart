@@ -1,10 +1,11 @@
-import 'package:focus_echo_ai/core/widgets/focusecho_brand.dart';
+import 'study_planner.dart';
 import 'dart:math' as math;
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/workspace_ui.dart';
 import '../../services/ai_coach_service.dart';
 import 'focus_session_state.dart';
 import 'widgets/coach_debrief_card.dart';
@@ -33,7 +34,8 @@ class SessionSummaryScreen extends StatelessWidget {
     final median = (stats?['median_recovery_seconds'] as num?)?.toInt() ?? 0;
 
     return Scaffold(
-      appBar: AppBar(actions:const [Padding(padding:EdgeInsets.symmetric(horizontal:12),child:FocusEchoLogo())],title: const Text('Session Complete')),
+      appBar: const FocusWorkspaceAppBar(
+          activePath: '/studio', pageTitle: 'Session Complete'),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
@@ -83,6 +85,16 @@ class SessionSummaryScreen extends StatelessWidget {
                               _detailRow('Duration',
                                   _formatDuration(summary.actualSeconds)),
                               const SizedBox(height: 6),
+                              for (final item in const {
+                                'focus_seconds': 'Focus time',
+                                'recorded_drift_seconds': 'Distracted',
+                                'recovering_seconds': 'Returning to task',
+                                'paused_seconds': 'Paused',
+                                'break_seconds': 'Intentional breaks'
+                              }.entries)
+                                if (stats?[item.key] is int)
+                                  _detailRow(item.value,
+                                      _formatDuration(stats![item.key] as int)),
                               _detailRow('Median recovery', '${median}s'),
                             ],
                           ),
@@ -122,7 +134,7 @@ class SessionSummaryScreen extends StatelessWidget {
                   ],
                   if (summary.parkedItems.isNotEmpty) ...[
                     const SizedBox(height: 16),
-                    _parkingSummary(summary.parkedItems),
+                    _parkingSummary(context, summary.parkedItems),
                   ],
                   const SizedBox(height: 16),
                   Container(
@@ -186,7 +198,7 @@ class SessionSummaryScreen extends StatelessWidget {
     );
   }
 
-  Widget _parkingSummary(List<String> items) {
+  Widget _parkingSummary(BuildContext context, List<String> items) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: AppDecorations.glassmorphismCard(),
@@ -198,7 +210,17 @@ class SessionSummaryScreen extends StatelessWidget {
           for (final item in items)
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
-              child: Text('• $item', style: AppTextStyles.bodyMedium),
+              child: ListTile(
+                  title: Text('• $item'),
+                  trailing: IconButton(
+                      tooltip: 'Create planner task',
+                      icon: const Icon(Icons.add_task),
+                      onPressed: () => Navigator.push<void>(
+                          context,
+                          MaterialPageRoute(
+                              builder: (ctx) => StudyPlanner(
+                                  initialSubject: item,
+                                  onStart: (_) => Navigator.pop(ctx)))))),
             ),
         ],
       ),

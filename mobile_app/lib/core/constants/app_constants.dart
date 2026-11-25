@@ -24,10 +24,13 @@ class AppKeys {
   static const webDistractingSites = 'web_distracting_sites';
   static const focusPreferencesUpdatedAt = 'focus_preferences_updated_at';
   static const userId = 'user_id';
+  static const anonymousUserId = 'anonymous_user_id';
   static const xpTotal = 'xp_total';
   static const streakDays = 'streak_days';
+
   /// Lifetime total of all streak days ever earned (MOB-3d).
   static const cumulativeStreakDays = 'cumulative_streak_days';
+
   /// ISO-8601 date (yyyy-MM-dd) of the last day a session was completed.
   /// Used by streak logic to detect consecutive-day activity (MOB-3c).
   static const lastSessionDate = 'last_session_date';
@@ -58,6 +61,7 @@ class AppDurations {
   static const notificationGraceMs = 30000;
   static const screenOnGraceMs = 5000;
   static const debounceMs = 500;
+
   /// Number of missed days allowed before a streak resets (MOB-3c grace day).
   /// 1 = the user may miss exactly one calendar day and still keep their streak.
   static const streakGraceDays = 1;
@@ -117,14 +121,18 @@ class AppXP {
   static const level3Min = 1500;
   static const level3Max = 3499;
   static const level4Min = 3500;
+
   /// XP for recovering from a distraction within [AppRiskThresholds.mediumRecoverySeconds].
   static const recoveryXp = 25;
+
   /// XP for recovering after [AppRiskThresholds.mediumRecoverySeconds] (slower recovery).
   static const slowRecoveryXp = 10;
   static const failurePenalty = -10;
   static const streakBonus7Days = 100;
+
   /// Base XP awarded when a session is stopped cleanly (MOB-3e).
   static const sessionCompletionXp = 50;
+
   /// Minimum session duration (minutes) before base completion XP is awarded.
   /// Guards against 1-second accidental sessions earning points (MOB-3e).
   static const minSessionMinutesForXp = 1;

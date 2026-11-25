@@ -8,6 +8,14 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var ambience: android.media.MediaPlayer? = null
+
+    override fun onDestroy() {
+        ambience?.release()
+        ambience = null
+        super.onDestroy()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -31,6 +39,42 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
                 when (call.method) {
+                    "reopenTask" -> {
+                        val target = call.arguments as? String
+                        val launch = target?.let { packageManager.getLaunchIntentForPackage(it) }
+                        if (launch == null) result.success(false)
+                        else try {
+                            startActivity(launch)
+                            result.success(true)
+                        } catch (_: SecurityException) { result.success(false) }
+                    }
+                    "studioAmbience" -> {
+                        val volume = (call.arguments as? Number)?.toFloat()?.coerceIn(0f, 1f) ?: 0f
+                        try {
+                            if (volume == 0f) {
+                                ambience?.release()
+                                ambience = null
+                            } else {
+                                val player = ambience ?: android.media.MediaPlayer().also {
+                                    ambience = it
+                                    val key = io.flutter.FlutterInjector.instance().flutterLoader()
+                                        .getLookupKeyForAsset("assets/audio/soft_noise.wav")
+                                    assets.openFd(key).use { fd ->
+                                        it.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+                                    }
+                                    it.isLooping = true
+                                    it.prepare()
+                                }
+                                player.setVolume(volume, volume)
+                                if (!player.isPlaying) player.start()
+                            }
+                            result.success(null)
+                        } catch (e: Exception) {
+                            ambience?.release()
+                            ambience = null
+                            result.error("audio_unavailable", "Ambient audio unavailable", null)
+                        }
+                    }
                     "ackDistractionEvent" -> {
                         val deliveryId = call.arguments as? String
                         result.success(

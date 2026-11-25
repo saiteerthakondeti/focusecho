@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import '../../services/browser_monitor/browser_monitor.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -114,6 +116,7 @@ class SettingsViewModel extends StateNotifier<SettingsState> {
     if (state.localOnlyMode) return;
     state = state.copyWith(cloudSyncEnabled: value);
     await _prefs.setBool(AppKeys.syncEnabled, value);
+    if (kIsWeb) BrowserMonitor.instance.syncCredentialsIfAvailable();
     if (value) {
       await AppDependencies.supabaseService
           .syncFocusPreferencesFromPrefs(_prefs);
@@ -135,6 +138,7 @@ class SettingsViewModel extends StateNotifier<SettingsState> {
     state = next;
     await _prefs.setBool(AppKeys.localOnlyMode, value);
     await _prefs.setBool(AppKeys.syncEnabled, next.cloudSyncEnabled);
+    if (kIsWeb) BrowserMonitor.instance.syncCredentialsIfAvailable();
     await _prefs.setBool(AppKeys.analyticsEnabled, next.analyticsEnabled);
     if (!value && next.cloudSyncEnabled) {
       await AppDependencies.supabaseService
@@ -228,6 +232,14 @@ class SettingsViewModel extends StateNotifier<SettingsState> {
       }
       await DatabaseHelper.instance.clearAllUserData();
       await _prefs.remove('study_slots_${currentUser?.id ?? "guest"}');
+      await _prefs.remove(
+          'session_break_${_prefs.getString(AppKeys.userId) ?? "local-user"}');
+      await _prefs.remove(
+          'coach_preference_${_prefs.getString(AppKeys.userId) ?? "local-user"}');
+      await _prefs.remove(
+          'studio_clock_${_prefs.getString(AppKeys.userId) ?? "local-user"}');
+      await _prefs.remove(
+          'planner_sessions_${_prefs.getString(AppKeys.userId) ?? "local-user"}');
       await _prefs.remove('strict_allowed');
       await _prefs.remove('strict_focus');
       await _clearPrivacyDataFromPrefs();
@@ -248,6 +260,7 @@ class SettingsViewModel extends StateNotifier<SettingsState> {
 
   Future<void> _clearPrivacyDataFromPrefs() async {
     await _prefs.remove(AppKeys.userId);
+    await _prefs.remove(AppKeys.anonymousUserId);
     await _prefs.remove(AppKeys.productiveApps);
     await _prefs.remove(AppKeys.distractingApps);
     await _prefs.remove(AppKeys.xpTotal);

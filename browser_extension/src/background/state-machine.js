@@ -104,6 +104,9 @@ export function transition(currentState, event, ctx, now = Date.now()) {
     };
   }
 
+  if (type === EV.USER_PAUSE_SESSION && currentState !== STATE.IDLE && currentState !== STATE.SESSION_PAUSED) {
+    return {nextState:STATE.SESSION_PAUSED, actions:['HIDE_OVERLAY','CLEAR_DISTRACTION','LOG_SESSION_PAUSED']};
+  }
   if (type === EV.ALLOW_SITE_FOR_SESSION) {
     return {
       nextState: STATE.MONITORING,

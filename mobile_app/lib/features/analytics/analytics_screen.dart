@@ -1,3 +1,4 @@
+import '../focus_session/planned_focus.dart';
 import 'dart:math' as math;
 
 import 'package:fl_chart/fl_chart.dart';
@@ -76,6 +77,20 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(analyticsProvider);
+    final taskTimes = <String, int>{};
+    final taskNames = <String, String>{};
+    for (final entry in ref
+        .read(focusSessionProvider.notifier)
+        .plannerSessions
+        .records
+        .values) {
+      if (entry['focus_seconds'] is! int ||
+          entry['id'] is! String ||
+          entry['cancelled'] == true) continue;
+      final id = entry['id'] as String;
+      taskNames[id] = entry['subject'];
+      taskTimes[id] = (taskTimes[id] ?? 0) + (entry['focus_seconds'] as int);
+    }
     final vm = ref.read(analyticsProvider.notifier);
     final dayLabels = slidingDayLabels;
 
@@ -525,6 +540,17 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                           padding: EdgeInsets.all(width >= 800 ? 22 : 12),
                           children: [
                             AnalyticsOverview(state: state),
+                            if (taskTimes.isNotEmpty)
+                              ExpansionTile(
+                                  title: const Text('Planned task focus time'),
+                                  subtitle: const Text(
+                                      'Completed sessions on this device, less recorded distraction time'),
+                                  children: [
+                                    for (final e in taskTimes.entries)
+                                      ListTile(
+                                          title: Text(taskNames[e.key]!),
+                                          trailing: Text(_duration(e.value))),
+                                  ]),
                             if (state.errorMessage != null)
                               Padding(
                                   padding: const EdgeInsets.all(8),
@@ -603,21 +629,22 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                                                     icon: const Icon(
                                                         Icons.calendar_month),
                                                     onPressed: () async {
-                                                      final subject = await Navigator.push<
-                                                              String>(
+                                                      final task = await Navigator.push<
+                                                              PlannedFocus>(
                                                           context,
                                                           MaterialPageRoute(
                                                               builder: (_) =>
                                                                   StudyPlanner(
                                                                       suggestedHour:
                                                                           hour)));
-                                                      if (subject != null &&
-                                                          context.mounted) {
-                                                        ref
-                                                            .read(
-                                                                focusSessionProvider
-                                                                    .notifier)
-                                                            .setIntent(subject);
+                                                      if (task != null &&
+                                                          context.mounted &&
+                                                          ref
+                                                              .read(
+                                                                  focusSessionProvider
+                                                                      .notifier)
+                                                              .selectTask(
+                                                                  task)) {
                                                         context.push(AppRoutes
                                                             .focusSession);
                                                       }

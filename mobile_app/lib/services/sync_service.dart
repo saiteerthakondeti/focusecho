@@ -65,19 +65,6 @@ class SyncService {
       var synced = 0;
       var failed = 0;
 
-      final events = await _eventDao.getUnsyncedEvents();
-      for (final event in events) {
-        final success = await _retryWithBackoff(() async {
-          await _supabaseService.upsertDistractionEvent(event);
-          await _eventDao.markAsSynced(event.id);
-        });
-        if (success) {
-          synced++;
-        } else {
-          failed++;
-        }
-      }
-
       final sessions = await _sessionDao.getUnsyncedSessions();
       for (final session in sessions) {
         var persistedNewFields = true;
@@ -90,6 +77,19 @@ class SyncService {
           synced++;
         } else if (success) {
           failed++;
+        } else {
+          failed++;
+        }
+      }
+
+      final events = await _eventDao.getUnsyncedEvents();
+      for (final event in events) {
+        final success = await _retryWithBackoff(() async {
+          await _supabaseService.upsertDistractionEvent(event);
+          await _eventDao.markAsSynced(event.id);
+        });
+        if (success) {
+          synced++;
         } else {
           failed++;
         }
@@ -109,6 +109,16 @@ class SyncService {
         }
       }
 
+      for (final run in [
+        _supabaseService.syncPlanner,
+        _supabaseService.syncStudio
+      ]) {
+        try {
+          await run(_prefs);
+        } on PostgrestException {
+          failed++;
+        }
+      }
       return SyncResult(
         synced: synced,
         failed: failed,

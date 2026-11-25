@@ -83,7 +83,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     // restart the elapsed timer. It returns false and clears the stale flag if
     // the row is gone (e.g. the user force-stopped and cleared data).
     final sessionWasActive = prefs.getBool(AppKeys.sessionActive) ?? false;
-    if (sessionWasActive) {
+    if (sessionWasActive || prefs.containsKey('session_break_${prefs.getString(AppKeys.userId)??"local-user"}')) {
       final vm = ref.read(focusSessionProvider.notifier);
       final resumed = await vm.resumeSession();
       if (!mounted) return;

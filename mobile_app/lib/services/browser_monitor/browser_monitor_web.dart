@@ -7,6 +7,7 @@ import 'package:web/web.dart' as web;
 
 import '../../core/constants/app_constants.dart';
 import 'browser_activity.dart';
+import '../../core/providers/app_dependencies.dart';
 
 class BrowserMonitor {
   BrowserMonitor._();
@@ -159,7 +160,16 @@ class BrowserMonitor {
     try {
       final session = Supabase.instance.client.auth.currentSession;
       final user = Supabase.instance.client.auth.currentUser;
-      if (session != null && user != null) {
+      final prefs = AppDependencies.prefs;
+      if (session == null ||
+          user == null ||
+          prefs.getBool(AppKeys.localOnlyMode) == true ||
+          prefs.getBool(AppKeys.syncEnabled) == false) {
+        _postMessage({'source': 'focusecho-web', 'type': 'fe:pause_cloud'},
+            targetOrigin: web.window.location.origin);
+        return;
+      }
+      {
         pushCredentialsToExtension(
           authToken: session.accessToken,
           refreshToken: session.refreshToken,
@@ -177,6 +187,7 @@ class BrowserMonitor {
 
   Future<void> startSession(
     List<String> distractingSites, {
+    int recoverySeconds = 10,
     bool strict = false,
     List<String> allowed = const [],
     String? sessionId,
@@ -193,9 +204,34 @@ class BrowserMonitor {
       'intention': intention,
       'userId': userId,
       'distractingSites': distractingSites,
+      'recoverySeconds': recoverySeconds,
       'strict': strict,
       'allowed': allowed,
     });
+  }
+
+  void reopenTask(String id) {
+    _postMessage(
+        {'source': 'focusecho-web', 'type': 'fe:reopen_task', 'sessionId': id},
+        targetOrigin: web.window.location.origin);
+  }
+
+  void updateObjective(String sessionId, String objective) {
+    _postMessage({
+      'source': 'focusecho-web',
+      'type': 'fe:update_objective',
+      'sessionId': sessionId,
+      'objective': objective
+    }, targetOrigin: web.window.location.origin);
+  }
+
+  void setBreak(String sessionId, bool paused) {
+    _postMessage({
+      'source': 'focusecho-web',
+      'type': 'fe:session_break',
+      'sessionId': sessionId,
+      'paused': paused
+    }, targetOrigin: web.window.location.origin);
   }
 
   Future<void> stopSession() async {

@@ -37,7 +37,7 @@ class InterventionEvent {
       level: (map['level'] as num?)?.toInt() ?? 1,
       actionTaken: map['action_taken'] as String? ?? 'shown',
       timestamp: DateTime.tryParse(map['timestamp'] as String? ?? '') ?? DateTime.now(),
-      isSynced: (map['is_synced'] as int? ?? 0) == 1,
+      isSynced: map['is_synced'] == 1 || map['is_synced'] == true,
     );
   }
 }

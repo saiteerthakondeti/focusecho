@@ -18,6 +18,7 @@ class InterventionOverlay extends StatelessWidget {
     required this.onReturnToFocus,
     required this.onTakeBreak,
     required this.onPauseSession,
+    this.onRecoveryLab,
   });
 
   final int level;
@@ -27,6 +28,7 @@ class InterventionOverlay extends StatelessWidget {
   final VoidCallback onReturnToFocus;
   final VoidCallback onTakeBreak;
   final VoidCallback onPauseSession;
+  final VoidCallback? onRecoveryLab;
 
   @override
   Widget build(BuildContext context) {
@@ -63,6 +65,10 @@ class InterventionOverlay extends StatelessWidget {
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyLarge,
                 ),
+                if (onRecoveryLab != null)
+                  TextButton(
+                      onPressed: onRecoveryLab,
+                      child: const Text("Open Recovery Lab")),
                 if (sessionIntent.trim().isNotEmpty) ...[
                   const SizedBox(height: 12),
                   Container(

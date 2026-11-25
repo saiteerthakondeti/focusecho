@@ -162,10 +162,18 @@ class FocusDetectionService : Service() {
         if (runCatching { getSystemService(android.view.WindowManager::class.java).addView(panel,params) }.isSuccess) gateView = panel
     }
 
+    private var observedReturnApp: String? = null
+    private var observedReturnStart = 0L
+    private var awaitingReturn = false
+
     private fun detectForegroundApp() {
         if (!cachedSessionActive) return
 
-        val packageName = getForegroundPackageName() ?: return
+        val packageName = getForegroundPackageName()
+        if (packageName == null || !(getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive) {
+            observedReturnApp = null
+            return
+        }
         val now = System.currentTimeMillis()
         val label = getAppLabel(packageName)
 
@@ -181,6 +189,24 @@ class FocusDetectionService : Service() {
         val isDistraction = !essential && if (strict) (0 until allowed.length()).none { allowed.optString(it) == packageName }
             else distractingRaw.contains(packageName) || ALWAYS_DISTRACTION_PACKAGES.contains(packageName)
 
+        if (isDistraction) {
+            awaitingReturn = true
+            observedReturnApp = null
+        } else if (awaitingReturn) {
+            val productive = (0 until allowed.length()).any { allowed.optString(it) == packageName }
+            if (!productive) observedReturnApp = null
+            else if (observedReturnApp != packageName) {
+                observedReturnApp = packageName
+                observedReturnStart = android.os.SystemClock.elapsedRealtime()
+            } else {
+                val seconds = (prefs.all["flutter.recovery_duration"] as? Number)?.toInt()?.coerceIn(1,300) ?: 10
+                if (android.os.SystemClock.elapsedRealtime() - observedReturnStart >= seconds * 1000L) {
+                    awaitingReturn = false
+                    sendOrBuffer(JSONObject().put("eventType","sustained_return")
+                        .put("seconds", seconds).put("timestamp",Instant.now().toString()).toString())
+                }
+            }
+        }
         if (packageName == lastForegroundPackage) {
             if (isDistraction) {
                 if (continuousDistractionStartMs == 0L) continuousDistractionStartMs = now

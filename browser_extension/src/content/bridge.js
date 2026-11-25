@@ -68,6 +68,22 @@ window.addEventListener('message', async (event) => {
   const data = event.data;
   const type = data.type;
 
+  if (type === 'fe:pause_cloud') {
+    chrome.runtime.sendMessage({type}).catch(() => {});
+    return;
+  }
+  if (type === 'fe:reopen_task' && typeof data.sessionId === 'string') {
+    chrome.runtime.sendMessage({type, sessionId: data.sessionId}).catch(() => {});
+    return;
+  }
+  if (type === 'fe:update_objective' && typeof data.sessionId === 'string' && typeof data.objective === 'string') {
+    chrome.runtime.sendMessage({type,sessionId:data.sessionId,objective:data.objective}).catch(()=>{});
+    return;
+  }
+  if (type === 'fe:session_break' && typeof data.sessionId === 'string' && typeof data.paused === 'boolean') {
+    chrome.runtime.sendMessage({type, sessionId:data.sessionId, paused:data.paused}).catch(() => {});
+    return;
+  }
   if (type === 'fe:parking_items') {
     chrome.runtime.sendMessage({
       type: 'fe:parking_set',
@@ -107,6 +123,7 @@ window.addEventListener('message', async (event) => {
         type: 'fe:start_session',
         session_id:       data.sessionId || crypto.randomUUID(),
         intention:        data.intention || 'Web Focus Session',
+        recoverySeconds: data.recoverySeconds,
         strict: data.strict === true,
           allowed: [...(Array.isArray(data.allowed) ? data.allowed : []), location.hostname],
           distraction_list: data.distractingSites || [],

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -31,6 +31,28 @@ class IntentionRefineResponse(BaseModel):
     clarity_score: int = Field(..., ge=1, le=100)
     coach_feedback: str
     is_fallback: bool = False
+
+
+class CoachQuestion(BaseModel):
+    question: str = Field(min_length=1, max_length=120)
+    previous_question: Optional[str] = Field(default=None, max_length=120)
+
+
+class CoachAdvice(BaseModel):
+    advice: str = Field(min_length=1, max_length=480)
+
+
+class CoachAnswer(CoachAdvice):
+    is_fallback: bool
+    sessions_analyzed: int
+
+
+class TaskSteps(BaseModel):
+    steps: List[Annotated[str, Field(min_length=1, max_length=120)]] = Field(min_length=2, max_length=5)
+
+
+class TaskDraft(TaskSteps):
+    is_fallback: bool
 
 
 class SessionDebriefRequest(BaseModel):
