@@ -7,6 +7,35 @@ class StudyMetrics {
   final int today, yesterday, previousAtThisTime, samples;
   final int? hour;
   final bool hasDurations;
+  static double median(List<int> values) {
+    if (values.isEmpty) return 0;
+    final sorted = List<int>.of(values)..sort();
+    final middle = sorted.length ~/ 2;
+    return (sorted[(sorted.length - 1) ~/ 2] + sorted[middle]) / 2;
+  }
+
+  static ({double rate, double median, int total}) recoveryStats(
+      Iterable<DistractionEvent> events, DateTime start, DateTime end) {
+    var total = 0;
+    var fast = 0;
+    final durations = <int>[];
+    for (final e in events) {
+      if (e.eventType != 'distraction' ||
+          e.triggeredAt.isBefore(start) ||
+          !e.triggeredAt.isBefore(end)) continue;
+      total++;
+      final seconds = e.recoveryTimeSeconds;
+      if (!e.isRecovered || seconds == null || seconds < 0) continue;
+      durations.add(seconds);
+      if (seconds < 30) fast++;
+    }
+    return (
+      rate: total == 0 ? 0.0 : 100 * fast / total,
+      median: median(durations),
+      total: total
+    );
+  }
+
   static StudyMetrics calculate(List<DistractionEvent> events,
       List<FocusSession> sessions, DateTime now) {
     final midnight = DateTime(now.year, now.month, now.day);

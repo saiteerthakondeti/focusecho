@@ -1,3 +1,4 @@
+import '../analytics/study_metrics.dart';
 import 'planned_focus.dart';
 import 'studio_time.dart';
 import 'dart:async';
@@ -31,11 +32,10 @@ int medianRecoverySeconds(Iterable<Map<String, dynamic>> rows) {
   final recoveryTimes = rows
       .map((row) => row['recovery_time_seconds'])
       .whereType<num>()
+      .where((value) => value >= 0)
       .map((value) => value.toInt())
-      .toList()
-    ..sort();
-  if (recoveryTimes.isEmpty) return 0;
-  return recoveryTimes[recoveryTimes.length ~/ 2];
+      .toList();
+  return StudyMetrics.median(recoveryTimes).round();
 }
 
 class FocusSessionViewModel extends StateNotifier<FocusSessionState> {

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/models/focus_session.dart';
+import '../../core/models/distraction_event.dart';
 import '../../core/providers/app_dependencies.dart';
 import '../../core/widgets/workspace_ui.dart';
 import '../../core/widgets/focusecho_brand.dart' show NeonPanel;
@@ -217,11 +218,10 @@ class _EchoCoachPageState extends ConsumerState<EchoCoachPage> {
             .map((r) => r['focus_seconds'])
             .whereType<int>()
             .where((s) => s >= 60)
-            .toList()
-          ..sort();
+            .toList();
         answer = saved.length < 3
             ? 'Complete three planned sessions with recorded focus time to get a duration suggestion.'
-            : 'Try a ${(saved[saved.length ~/ 2] ~/ 60).clamp(1, 240)}-minute block. That is the median focused duration of your ${saved.length} recorded planned sessions.';
+            : 'Try a ${(StudyMetrics.median(saved) ~/ 60).clamp(1, 240)}-minute block. Based on the median focused duration of your ${saved.length} recorded planned sessions.';
       } else if (lower.contains('task') || lower.contains('next step')) {
         answer = vm.activeTask?.objective ??
             vm.selectedTask?.objective ??
@@ -531,13 +531,14 @@ class _EchoCoachPageState extends ConsumerState<EchoCoachPage> {
                                     (s) => s.status == SessionStatus.completed)
                                 .toList() ??
                             const <FocusSession>[];
-                        final events =
-                            history?.events.values.toList() ?? const [];
-                        final recovered =
-                            events.where((e) => e.isRecovered).length;
-                        final recoveryRate = events.isEmpty
+                        final events = history?.events.values ??
+                            const <DistractionEvent>[];
+                        final now = DateTime.now();
+                        final recovery = StudyMetrics.recoveryStats(
+                            events, now.subtract(const Duration(days: 7)), now);
+                        final recoveryRate = recovery.total == 0
                             ? '—'
-                            : '${(recovered * 100 / events.length).round()}%';
+                            : '${recovery.rate.round()}%';
                         final avgScore = sessions.isEmpty
                             ? '—'
                             : (sessions.fold<double>(
@@ -558,7 +559,7 @@ class _EchoCoachPageState extends ConsumerState<EchoCoachPage> {
                           WorkspaceStatCard(
                               icon: Icons.favorite_border,
                               value: recoveryRate,
-                              label: 'Recorded recovery rate',
+                              label: '7-day fast recovery rate',
                               accent: const Color(0xffff69bd)),
                           WorkspaceStatCard(
                               icon: Icons.history_rounded,

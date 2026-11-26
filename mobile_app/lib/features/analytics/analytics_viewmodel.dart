@@ -12,21 +12,6 @@ import '../../local_db/focus_session_dao.dart';
 import '../../services/backend_analytics_service.dart';
 import '../../core/utils/fe_logger.dart';
 
-/// Feature 3 — Recovery Rate definition (primary, used everywhere):
-/// the % of distractions recovered within 30 seconds over a rolling window.
-/// Median recovery time is shown as a supporting stat.
-class RecoveryStats {
-  const RecoveryStats({
-    required this.rate,
-    required this.medianRecoverySeconds,
-    required this.sampleSize,
-  });
-
-  final double rate;
-  final double medianRecoverySeconds;
-  final int sampleSize;
-}
-
 class AnalyticsState {
   const AnalyticsState({
     this.metrics,
@@ -139,9 +124,6 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
   final BackendAnalyticsService _backendAnalytics;
   final SupabaseClient? _cloudClient;
   SupabaseClient get _cloud => _cloudClient ?? Supabase.instance.client;
-
-  /// Primary Recovery Rate definition: % of distractions recovered < 30s.
-  static const int _fastRecoveryThresholdSeconds = 30;
 
   /// MOB-3g: loads local SQLite data first (fast), then fetches remote backend
   /// data in parallel. The remote call is best-effort — failure is logged and
@@ -310,6 +292,7 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       }
 
       for (final e in recentEvents) {
+        if (e.triggeredAt.isAfter(now)) continue;
         final itemMidnight = dayKey(e.triggeredAt);
         final daysAgo = todayMidnight.difference(itemMidnight).inDays;
         final dayIndex = 6 - daysAgo;
@@ -321,13 +304,11 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
         appCount[label] = (appCount[label] ?? 0) + 1;
       }
 
-      final thisWeek =
-          _recoveryStatsForWindow(recentEvents, now, const Duration(days: 7));
-      final lastWeek = _recoveryStatsForWindow(
-        recentEvents,
-        now.subtract(const Duration(days: 7)),
-        const Duration(days: 7),
-      );
+      final weekStart = now.subtract(const Duration(days: 7));
+      final thisWeek = StudyMetrics.recoveryStats(recentEvents, weekStart, now);
+      final lastWeek = StudyMetrics.recoveryStats(
+          recentEvents, weekStart.subtract(const Duration(days: 7)), weekStart);
+
       final trend = thisWeek.rate - lastWeek.rate;
 
       FELog.i(
@@ -339,36 +320,43 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
 
       // ── Bug 3: Take 10 most recent completed sessions, then reverse for left-to-right chronological order
       final completed = sessions
-          .where(
-              (s) => s.endTime != null || s.status == SessionStatus.completed)
+          .where((s) =>
+              s.status == SessionStatus.completed &&
+              s.endTime != null &&
+              !s.endTime!.isAfter(now) &&
+              !s.endTime!.isBefore(s.startTime))
           .toList();
-      final scoreSessions = completed.isNotEmpty ? completed : sessions;
+
+      final weeklyCompleted = completed
+          .where((s) =>
+              !s.startTime.isBefore(weekStart) && s.startTime.isBefore(now))
+          .toList();
 
       state = state.copyWith(
         errorMessage: unavailable.isEmpty
             ? null
             : 'Could not load cloud ${unavailable.join(" and ")}. Showing available data. Pull to retry.',
         isRemoteLoaded: false,
-        summarySessionCount: completed.length,
-        summaryAverageScore: completed.isEmpty
+        summarySessionCount: weeklyCompleted.length,
+        summaryAverageScore: weeklyCompleted.isEmpty
             ? 0
-            : completed.fold<double>(
+            : weeklyCompleted.fold<double>(
                     0, (sum, session) => sum + session.focusScore) /
-                completed.length,
+                weeklyCompleted.length,
         sessions: sessions,
         events: recentEvents,
         metrics: StudyMetrics.calculate(recentEvents, sessions, now),
         weeklyFocusMinutes: weeklyFocus,
         dailyDistractions: dailyDistractions,
         appDistribution: appCount,
-        sessionScores: scoreSessions
+        sessionScores: completed
             .take(10)
             .map((s) => s.focusScore)
             .toList()
             .reversed
             .toList(),
         recoveryRate: thisWeek.rate,
-        medianRecoverySeconds: thisWeek.medianRecoverySeconds,
+        medianRecoverySeconds: thisWeek.median,
         recoveryRateTrend: trend,
         isLoading: false,
       );
@@ -429,50 +417,6 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       FELog.w('Analytics',
           'Remote backend enrichment failed (continuing with local data): $e');
     }
-  }
-
-  /// Computes RecoveryStats for distractions triggered within
-  /// [now - window, now].
-  RecoveryStats _recoveryStatsForWindow(
-    List<DistractionEvent> events,
-    DateTime now,
-    Duration window,
-  ) {
-    final cutoff = now.subtract(window);
-    final recoveredSeconds = <double>[];
-    var total = 0;
-
-    for (final event in events) {
-      if (event.eventType != 'distraction') continue;
-      if (event.triggeredAt.isBefore(cutoff)) continue;
-      total++;
-      final seconds = event.recoveryTimeSeconds;
-      if (event.isRecovered && seconds != null) {
-        recoveredSeconds.add(seconds.toDouble());
-      }
-    }
-
-    if (total == 0) {
-      return const RecoveryStats(
-          rate: 0, medianRecoverySeconds: 0, sampleSize: 0);
-    }
-    final fast =
-        recoveredSeconds.where((s) => s < _fastRecoveryThresholdSeconds).length;
-    final rate = (fast / total) * 100;
-    final median = _median(recoveredSeconds);
-    return RecoveryStats(
-      rate: rate,
-      medianRecoverySeconds: median,
-      sampleSize: total,
-    );
-  }
-
-  static double _median(List<double> values) {
-    if (values.isEmpty) return 0;
-    final sorted = List<double>.from(values)..sort();
-    final mid = sorted.length ~/ 2;
-    if (sorted.length.isOdd) return sorted[mid];
-    return (sorted[mid - 1] + sorted[mid]) / 2;
   }
 }
 

@@ -22,6 +22,30 @@ def _client() -> Client:
     return create_client(url, key)
 
 
+def _all_rows(build_query) -> list[dict[str, Any]]:
+    rows = []
+    page_size = 500
+    while True:
+        page = (
+            build_query().order("id").range(len(rows), len(rows) + page_size - 1)
+            .execute().data or []
+        )
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+
+
+def _owned_distractions(client, user_id, columns, since, until):
+    return _all_rows(
+        lambda: client.table("distraction_events")
+        .select(f"{columns},focus_sessions!inner(user_id)")
+        .eq("focus_sessions.user_id", user_id)
+        .eq("event_type", "distraction")
+        .gte("triggered_at", since.isoformat())
+        .lt("triggered_at", until.isoformat())
+    )
+
+
 @router.get("/summary/{user_id}")
 def summary(
     user_id: str,
@@ -32,27 +56,18 @@ def summary(
         raise HTTPException(status_code=403, detail="Access denied: user_id mismatch.")
 
     client = _client()
-    sessions = (
-        client.table("focus_sessions")
-        .select("*")
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=7)
+    sessions = _all_rows(
+        lambda: client.table("focus_sessions")
+        .select("id,focus_score")
         .eq("user_id", user_id)
-        .limit(30)
-        .execute()
-        .data
-        or []
+        .eq("status", "completed")
+        .gte("start_time", since.isoformat())
+        .lt("start_time", now.isoformat())
+        .lte("end_time", now.isoformat())
     )
-    # C3 fix: events are filtered by session_id list, not fetched globally.
-    session_ids = [s["id"] for s in sessions]
-    events: list[dict[str, Any]] = []
-    if session_ids:
-        events = (
-            client.table("distraction_events")
-            .select("*")
-            .in_("session_id", session_ids)
-            .execute()
-            .data
-            or []
-        )
+    events = _owned_distractions(client, user_id, "app_label", since, now)
 
     avg_focus = round(
         sum(float(s.get("focus_score", 0)) for s in sessions) / max(len(sessions), 1),
@@ -97,33 +112,13 @@ def risk_trend(
         raise HTTPException(status_code=403, detail="Access denied: user_id mismatch.")
 
     client = _client()
-    # C3 fix: fetch via sessions to scope to this user.
-    session_rows = (
-        client.table("focus_sessions")
-        .select("id")
-        .eq("user_id", user_id)
-        .execute()
-        .data
-        or []
-    )
-    session_ids = [r["id"] for r in session_rows]
-    events: list[dict[str, Any]] = []
-    if session_ids:
-        events = (
-            client.table("distraction_events")
-            .select("triggered_at,risk_score")
-            .in_("session_id", session_ids)
-            .execute()
-            .data
-            or []
-        )
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    now = datetime.now(timezone.utc)
+    since = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=13)
+    events = _owned_distractions(client, user_id, "triggered_at,risk_score", since, now)
     grouped: dict[str, list[str]] = defaultdict(list)
     for event in events:
         ts = datetime.fromisoformat(str(event["triggered_at"]).replace("Z", "+00:00"))
-        if ts >= cutoff:
-            grouped[ts.date().isoformat()].append(str(event.get("risk_score", "SAFE")))
+        grouped[ts.astimezone(timezone.utc).date().isoformat()].append(str(event.get("risk_score")))
 
     daily = []
     for day, risks in sorted(grouped.items()):

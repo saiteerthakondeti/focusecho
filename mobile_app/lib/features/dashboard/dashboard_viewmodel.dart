@@ -84,7 +84,6 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
   /// Feature 3 — same primary definition as analytics:
   /// % of distractions recovered within 30 seconds, rolling week,
   /// with a week-over-week trend.
-  static const int _fastRecoveryThresholdSeconds = 30;
 
   Future<void> loadDashboard() async {
     state = state.copyWith(isLoading: true, errorMessage: null);
@@ -162,13 +161,10 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
       // Feature 3 — headline Recovery Rate over rolling 7 days.
       final now = DateTime.now();
       final recentEvents = await _loadEventsFromCloud(history);
-      final thisWeek =
-          _recoveryStatsForWindow(recentEvents, now, const Duration(days: 7));
-      final lastWeek = _recoveryStatsForWindow(
-        recentEvents,
-        now.subtract(const Duration(days: 7)),
-        const Duration(days: 7),
-      );
+      final weekStart = now.subtract(const Duration(days: 7));
+      final thisWeek = StudyMetrics.recoveryStats(recentEvents, weekStart, now);
+      final lastWeek = StudyMetrics.recoveryStats(
+          recentEvents, weekStart.subtract(const Duration(days: 7)), weekStart);
 
       FELog.i(
         'Dashboard',
@@ -199,8 +195,10 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
 
   Future<List<FocusSession>> _loadSessionsFromCloud() async {
     try {
-      final cutoff =
-          DateTime.now().subtract(const Duration(days: 7)).toIso8601String();
+      final cutoff = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(days: 14))
+          .toIso8601String();
       final rows = await Supabase.instance.client
           .from('focus_sessions')
           .select()
@@ -275,38 +273,6 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
     } catch (error) {
       FELog.d('Dashboard', 'Realtime unavailable: ${error.runtimeType}');
     }
-  }
-
-  ({double rate, double median}) _recoveryStatsForWindow(
-    List<dynamic> events,
-    DateTime now,
-    Duration window,
-  ) {
-    final cutoff = now.subtract(window);
-    final recoveredSeconds = <double>[];
-    var total = 0;
-
-    for (final event in events) {
-      if (event.eventType != 'distraction') continue;
-      if (event.triggeredAt.isBefore(cutoff)) continue;
-      total++;
-      final seconds = event.recoveryTimeSeconds;
-      if (event.isRecovered && seconds != null) {
-        recoveredSeconds.add(seconds.toDouble());
-      }
-    }
-
-    if (total == 0) return (rate: 0.0, median: 0.0);
-    final fast =
-        recoveredSeconds.where((s) => s < _fastRecoveryThresholdSeconds).length;
-    final sorted = List<double>.from(recoveredSeconds)..sort();
-    final mid = sorted.length ~/ 2;
-    final median = sorted.isEmpty
-        ? 0.0
-        : (sorted.length.isOdd
-            ? sorted[mid]
-            : (sorted[mid - 1] + sorted[mid]) / 2);
-    return (rate: (fast / total) * 100, median: median);
   }
 
   @override

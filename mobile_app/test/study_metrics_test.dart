@@ -44,6 +44,20 @@ void main() {
       session(11, 14),
     ]);
     expect(focus(midnight, now), 4 * 3600);
+    final boundary = now.subtract(const Duration(days: 7));
+    final recoveryEvents = [
+      drift('previous', boundary.subtract(const Duration(seconds: 1))),
+      drift('quick', boundary)
+          .copyWith(isRecovered: true, recoveryTimeSeconds: 10),
+      drift('slow', midnight)
+          .copyWith(isRecovered: true, recoveryTimeSeconds: 30),
+      drift('future', now.add(const Duration(hours: 1))),
+    ];
+    final current = StudyMetrics.recoveryStats(recoveryEvents, boundary, now);
+    expect((current.total, current.rate, current.median), (2, 50.0, 20.0));
+    final prior = StudyMetrics.recoveryStats(
+        recoveryEvents, boundary.subtract(const Duration(days: 7)), boundary);
+    expect((prior.total, prior.rate), (1, 0.0));
   });
   test(
       'Hour suggestion requires two sufficiently sampled windows and a measurable difference',

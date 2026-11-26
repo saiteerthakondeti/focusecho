@@ -1,3 +1,4 @@
+import '../../core/models/focus_session.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 import 'analytics_viewmodel.dart';
@@ -26,16 +27,15 @@ class _AnalyticsOverviewState extends State<AnalyticsOverview> {
     bool includes(DateTime time) =>
         !time.isBefore(start) && time.isBefore(until);
     final sessions = widget.state.sessions
-        .where((s) => includes(s.startTime) && s.endTime != null)
+        .where((s) =>
+            includes(s.startTime) &&
+            s.status == SessionStatus.completed &&
+            s.endTime != null &&
+            !s.endTime!.isBefore(s.startTime) &&
+            !s.endTime!.isAfter(now))
         .toList();
-    final events =
-        widget.state.events.where((e) => includes(e.triggeredAt)).toList();
-    final fast = events
-        .where((e) =>
-            e.isRecovered &&
-            e.recoveryTimeSeconds != null &&
-            e.recoveryTimeSeconds! < 30)
-        .length;
+    final recovery =
+        StudyMetrics.recoveryStats(widget.state.events, start, until);
     final seconds =
         StudyMetrics.recordedFocus(widget.state.sessions)(start, until);
     final drift =
@@ -65,7 +65,7 @@ class _AnalyticsOverviewState extends State<AnalyticsOverview> {
       ),
       (
         'Recovery Rate',
-        events.isEmpty ? '—' : '${(100 * fast / events.length).round()}%',
+        recovery.total == 0 ? '—' : '${recovery.rate.round()}%',
         Icons.bolt,
         const Color(0xff40e9bd)
       ),
