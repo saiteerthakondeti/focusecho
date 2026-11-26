@@ -1,3 +1,4 @@
+import '../analytics/study_metrics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/app_constants.dart';
@@ -15,6 +16,7 @@ class DashboardState {
   const DashboardState({
     this.userProfile,
     this.todaySessions = const [],
+    this.recentSessions = const [],
     this.todayDistractionCount = 0,
     this.totalFocusMinutesToday = 0,
     this.recoveryRate = 0,
@@ -26,6 +28,7 @@ class DashboardState {
 
   final UserProfile? userProfile;
   final List<FocusSession> todaySessions;
+  final List<FocusSession> recentSessions;
   final int todayDistractionCount;
   final int totalFocusMinutesToday;
   final double recoveryRate;
@@ -37,6 +40,7 @@ class DashboardState {
   DashboardState copyWith({
     UserProfile? userProfile,
     List<FocusSession>? todaySessions,
+    List<FocusSession>? recentSessions,
     int? todayDistractionCount,
     int? totalFocusMinutesToday,
     double? recoveryRate,
@@ -48,6 +52,7 @@ class DashboardState {
     return DashboardState(
       userProfile: userProfile ?? this.userProfile,
       todaySessions: todaySessions ?? this.todaySessions,
+      recentSessions: recentSessions ?? this.recentSessions,
       todayDistractionCount:
           todayDistractionCount ?? this.todayDistractionCount,
       totalFocusMinutesToday:
@@ -144,23 +149,15 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
       // are never missed, then narrow to local-calendar today for the stats.
       final history = await _loadSessionsFromCloud();
       final today = DateTime.now();
+      final midnight = DateTime(today.year, today.month, today.day);
       final todaySessions = history
           .where((s) =>
-              s.startTime.year == today.year &&
-              s.startTime.month == today.month &&
-              s.startTime.day == today.day)
+              !s.startTime.isBefore(midnight) && !s.startTime.isAfter(today))
           .toList();
-
-      final sessionsForStats =
-          todaySessions.isNotEmpty ? todaySessions : history;
       final distractions =
-          sessionsForStats.fold<int>(0, (sum, s) => sum + s.totalDistractions);
-      final minutes = todaySessions.fold<int>(
-        0,
-        (sum, s) =>
-            sum +
-            ((s.endTime ?? DateTime.now()).difference(s.startTime).inMinutes),
-      );
+          todaySessions.fold<int>(0, (sum, s) => sum + s.totalDistractions);
+      final minutes =
+          StudyMetrics.recordedFocus(history)(midnight, today) ~/ 60;
 
       // Feature 3 — headline Recovery Rate over rolling 7 days.
       final now = DateTime.now();
@@ -182,7 +179,8 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
 
       state = state.copyWith(
         userProfile: profile,
-        todaySessions: todaySessions.isNotEmpty ? todaySessions : history,
+        todaySessions: todaySessions,
+        recentSessions: history,
         todayDistractionCount: distractions,
         totalFocusMinutesToday: minutes,
         recoveryRate: thisWeek.rate,

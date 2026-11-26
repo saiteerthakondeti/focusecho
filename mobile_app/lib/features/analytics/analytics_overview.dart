@@ -36,12 +36,8 @@ class _AnalyticsOverviewState extends State<AnalyticsOverview> {
             e.recoveryTimeSeconds != null &&
             e.recoveryTimeSeconds! < 30)
         .length;
-    final seconds = widget.state.sessions.fold<int>(0, (sum, s) {
-      final from = s.startTime.isBefore(start) ? start : s.startTime;
-      final end = s.endTime ?? now;
-      final to = end.isAfter(until) ? until : end;
-      return sum + (to.isAfter(from) ? to.difference(from).inSeconds : 0);
-    });
+    final seconds =
+        StudyMetrics.recordedFocus(widget.state.sessions)(start, until);
     final drift =
         StudyMetrics.recordedDuration(widget.state.events)(start, until);
     String duration(int s) =>

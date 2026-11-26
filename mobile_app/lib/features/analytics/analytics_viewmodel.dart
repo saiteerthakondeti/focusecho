@@ -302,14 +302,11 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
       final dailyDistractions = List<int>.filled(7, 0);
       final appCount = <String, int>{};
 
-      for (final s in sessions) {
-        final itemMidnight = dayKey(s.startTime);
-        final daysAgo = todayMidnight.difference(itemMidnight).inDays;
-        final dayIndex = 6 - daysAgo;
-        if (dayIndex >= 0 && dayIndex < 7) {
-          weeklyFocus[dayIndex] +=
-              (s.endTime ?? now).difference(s.startTime).inMinutes.toDouble();
-        }
+      final focus = StudyMetrics.recordedFocus(sessions);
+      for (var i = 0; i < 7; i++) {
+        final start = DateTime(now.year, now.month, now.day - 6 + i);
+        final end = DateTime(start.year, start.month, start.day + 1);
+        weeklyFocus[i] = focus(start, end.isAfter(now) ? now : end) / 60;
       }
 
       for (final e in recentEvents) {

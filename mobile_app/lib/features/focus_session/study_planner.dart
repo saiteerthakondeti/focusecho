@@ -74,9 +74,17 @@ class _StudyPlannerState extends State<StudyPlanner> {
 
   Future<void> edit([Map<String, dynamic>? slot]) async {
     final now = DateTime.now();
+    final today = DateUtils.dateOnly(now);
+    final selected = calendarDay;
+    final target =
+        selected != null && selected.isAfter(today) ? selected : today;
     final initial = slot == null
         ? DateTime(
-            now.year, now.month, now.day, widget.suggestedHour ?? now.hour)
+            target.year,
+            target.month,
+            target.day,
+            widget.suggestedHour ?? now.hour,
+            widget.suggestedHour == null ? now.minute : 0)
         : DateTime.parse(slot['starts_at']).toLocal();
     String subject = slot?['subject'] ?? widget.initialSubject ?? '';
     final details = Map<String, dynamic>.from(slot?['details'] ?? {});
@@ -160,7 +168,7 @@ class _StudyPlannerState extends State<StudyPlanner> {
     final day = await showDatePicker(
         context: context,
         initialDate: initial,
-        firstDate: DateTime(2000),
+        firstDate: slot == null ? today : DateTime(2000),
         lastDate: DateTime(2100));
     if (!mounted || day == null) return;
     final start = await showTimePicker(
@@ -235,6 +243,16 @@ class _StudyPlannerState extends State<StudyPlanner> {
       ..sort((a, b) => a['starts_at'].compareTo(b['starts_at']) as int);
     final today = DateUtils.dateOnly(DateTime.now()),
         tomorrow = DateTime(today.year, today.month, today.day + 1);
+    String boardFor(Map row) {
+      final day = dayOf(row);
+      if (day.isBefore(today)) {
+        return row['details']?['complete'] == true ? 'Completed' : 'Overdue';
+      }
+      if (day == today) return 'Today';
+      if (day == tomorrow) return 'Tomorrow';
+      return 'Upcoming';
+    }
+
     Widget task(Map<String, dynamic> r) {
       final t = PlannedFocus.fromSlot(r),
           details = Map<String, dynamic>.from(r['details'] ?? {});
@@ -254,7 +272,7 @@ class _StudyPlannerState extends State<StudyPlanner> {
             ListTile(
                 title: Text(t.subject),
                 subtitle: Text(
-                    '${MaterialLocalizations.of(context).formatShortDate(dayOf(r))} · ${TimeOfDay.fromDateTime(DateTime.parse(r["starts_at"]).toLocal()).format(context)} · ${t.minutes} min · ${details["priority"] ?? "Normal"} priority')),
+                    'Scheduled ${MaterialLocalizations.of(context).formatShortDate(dayOf(r))} · ${TimeOfDay.fromDateTime(DateTime.parse(r["starts_at"]).toLocal()).format(context)} · ${t.minutes} min · ${details["priority"] ?? "Normal"} priority')),
             for (final step in steps)
               CheckboxListTile(
                   dense: true,
@@ -404,28 +422,31 @@ class _StudyPlannerState extends State<StudyPlanner> {
                       const SizedBox(height: 14),
                       Align(
                         alignment: Alignment.centerLeft,
-                        child: SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(
-                                value: 'Board',
-                                label: Text('Board'),
-                                icon: Icon(Icons.dashboard_outlined)),
-                            ButtonSegment(
-                                value: 'Calendar',
-                                label: Text('Calendar'),
-                                icon: Icon(Icons.calendar_month_outlined)),
-                            ButtonSegment(
-                                value: 'List',
-                                label: Text('List'),
-                                icon: Icon(Icons.view_list_outlined)),
-                          ],
-                          selected: {_viewMode},
-                          onSelectionChanged: (selection) => setState(() {
-                            _viewMode = selection.first;
-                            if (_viewMode == 'Calendar') calendarDay ??= today;
-                            if (_viewMode != 'Calendar') calendarDay = null;
-                          }),
-                        ),
+                        child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: SegmentedButton<String>(
+                              segments: const [
+                                ButtonSegment(
+                                    value: 'Board',
+                                    label: Text('Board'),
+                                    icon: Icon(Icons.dashboard_outlined)),
+                                ButtonSegment(
+                                    value: 'Calendar',
+                                    label: Text('Calendar'),
+                                    icon: Icon(Icons.calendar_month_outlined)),
+                                ButtonSegment(
+                                    value: 'List',
+                                    label: Text('List'),
+                                    icon: Icon(Icons.view_list_outlined)),
+                              ],
+                              selected: {_viewMode},
+                              onSelectionChanged: (selection) => setState(() {
+                                _viewMode = selection.first;
+                                if (_viewMode == 'Calendar')
+                                  calendarDay ??= today;
+                                if (_viewMode != 'Calendar') calendarDay = null;
+                              }),
+                            )),
                       ),
                       const SizedBox(height: 10),
                       if (notice != null) Text(notice!),
@@ -459,13 +480,15 @@ class _StudyPlannerState extends State<StudyPlanner> {
                               'Overdue',
                               'Today',
                               'Tomorrow',
-                              'Upcoming'
+                              'Upcoming',
+                              'Completed'
                             ])
-                              if (board != 'Overdue' ||
-                                  visible.any((r) => dayOf(r).isBefore(today)))
+                              if (!['Overdue', 'Completed'].contains(board) ||
+                                  visible.any((r) => boardFor(r) == board))
                                 DragTarget<Map<String, dynamic>>(
                                     onAcceptWithDetails: (drag) async {
-                                      if (board == 'Overdue') return;
+                                      if (board == 'Overdue' ||
+                                          board == 'Completed') return;
                                       final date = board == 'Upcoming'
                                           ? await showDatePicker(
                                               context: context,
@@ -497,19 +520,8 @@ class _StudyPlannerState extends State<StudyPlanner> {
                                                           .textTheme
                                                           .titleMedium),
                                                   for (final r in visible.where(
-                                                      (r) => board == 'Overdue'
-                                                          ? dayOf(r)
-                                                              .isBefore(today)
-                                                          : board == 'Today'
-                                                              ? dayOf(r) ==
-                                                                  today
-                                                              : board ==
-                                                                      'Tomorrow'
-                                                                  ? dayOf(r) ==
-                                                                      tomorrow
-                                                                  : dayOf(r)
-                                                                      .isAfter(
-                                                                          tomorrow)))
+                                                      (r) =>
+                                                          boardFor(r) == board))
                                                     task(r)
                                                 ]))))
                           ];

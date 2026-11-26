@@ -62,6 +62,21 @@ class StudyMetrics {
         intervals.add((start: start, end: end));
       }
     }
+    return _duration(intervals);
+  }
+
+  static int Function(DateTime, DateTime) recordedFocus(
+      List<FocusSession> sessions) {
+    return _duration([
+      for (final session in sessions)
+        if (session.endTime != null &&
+            session.status == SessionStatus.completed)
+          (start: session.startTime, end: session.endTime!),
+    ]);
+  }
+
+  static int Function(DateTime, DateTime) _duration(
+      List<({DateTime start, DateTime end})> intervals) {
     intervals.sort((a, b) => a.start.compareTo(b.start));
     return (DateTime from, DateTime until) {
       var cursor = from;

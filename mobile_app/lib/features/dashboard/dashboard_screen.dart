@@ -254,13 +254,13 @@ class DashboardScreen extends ConsumerWidget {
                                           style: AppTextStyles.displayMedium))
                                 ]),
                                 const SizedBox(height: 10),
-                                if (state.todaySessions.isEmpty)
+                                if (state.recentSessions.isEmpty)
                                   _panel(state.isLoading
                                       ? const LinearProgressIndicator()
                                       : const Text(
                                           'No sessions today. Start one!'))
                                 else
-                                  for (final s in state.todaySessions.take(5))
+                                  for (final s in state.recentSessions.take(5))
                                     Padding(
                                         padding:
                                             const EdgeInsets.only(bottom: 8),
