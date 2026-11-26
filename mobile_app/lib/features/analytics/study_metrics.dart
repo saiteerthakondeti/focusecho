@@ -40,8 +40,9 @@ class StudyMetrics {
       List<FocusSession> sessions, DateTime now) {
     final midnight = DateTime(now.year, now.month, now.day);
     final yesterday = DateTime(now.year, now.month, now.day - 1);
-    final priorCutoff = DateTime(
-        now.year, now.month, now.day - 1, now.hour, now.minute, now.second);
+    final elapsedToday = recordedDuration(events, sessions)(midnight, now);
+    final elapsedYesterday =
+        recordedDuration(events, sessions)(yesterday, midnight);
     final elapsed = recordedDuration(events, sessions);
     final groups = <int, ({int count, int seconds, int drift})>{};
     for (final s in sessions) {
@@ -71,12 +72,15 @@ class StudyMetrics {
         ? ranked.first
         : null;
     return StudyMetrics(
-        elapsed(midnight, now),
-        elapsed(yesterday, midnight),
-        elapsed(yesterday, priorCutoff),
+        elapsedToday,
+        elapsedYesterday,
+        recordedDuration(events, sessions)(
+            yesterday,
+            yesterday
+                .add(Duration(seconds: now.difference(midnight).inSeconds))),
         best?.key,
         best?.value.count ?? 0,
-        elapsed(yesterday, now) > 0);
+        elapsedToday > 0 || elapsedYesterday > 0);
   }
 
   static int Function(DateTime, DateTime) recordedDuration(

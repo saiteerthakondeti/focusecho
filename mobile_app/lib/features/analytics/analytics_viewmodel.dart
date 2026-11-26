@@ -304,7 +304,8 @@ class AnalyticsViewModel extends StateNotifier<AnalyticsState> {
         appCount[label] = (appCount[label] ?? 0) + 1;
       }
 
-      final weekStart = now.subtract(const Duration(days: 7));
+      final todayStart = DateTime(now.year, now.month, now.day);
+      final weekStart = todayStart.subtract(const Duration(days: 6));
       final thisWeek = StudyMetrics.recoveryStats(recentEvents, weekStart, now);
       final lastWeek = StudyMetrics.recoveryStats(
           recentEvents, weekStart.subtract(const Duration(days: 7)), weekStart);

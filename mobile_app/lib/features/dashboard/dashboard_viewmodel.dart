@@ -110,10 +110,10 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
       final history = await _loadSessionsFromCloud();
       final today = DateTime.now();
       final midnight = DateTime(today.year, today.month, today.day);
-      final todaySessions = history
-          .where((s) =>
-              !s.startTime.isBefore(midnight) && !s.startTime.isAfter(today))
-          .toList();
+      final todaySessions = history.where((s) {
+        final localStart = s.startTime.toLocal();
+        return !localStart.isBefore(midnight) && !localStart.isAfter(today);
+      }).toList();
       final distractions =
           todaySessions.fold<int>(0, (sum, s) => sum + s.totalDistractions);
       final minutes =
@@ -160,9 +160,13 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
           .toUtc()
           .subtract(const Duration(days: 14))
           .toIso8601String();
-      final rows = await Supabase.instance.client
+      final client = Supabase.instance.client;
+      final userId = _supabaseService.currentUser?.id;
+      if (userId == null) return _focusSessionDao.getSessionHistory(50);
+      final rows = await client
           .from('focus_sessions')
           .select()
+          .eq('user_id', userId)
           .gte('start_time', cutoff)
           .order('start_time', ascending: false);
       final cloudSessions = (rows as List)

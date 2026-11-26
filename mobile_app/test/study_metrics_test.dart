@@ -26,6 +26,8 @@ void main() {
     expect([result.today, result.yesterday, result.previousAtThisTime],
         [60, 100, 40]);
     expect(result.hour, isNull);
+    expect(result.previousAtThisTime, 40);
+    expect(result.hasDurations, isTrue);
     final skewed = drift('legacy', now.subtract(const Duration(minutes: 1)))
         .copyWith(
             recoveryTimeSeconds: 4,
