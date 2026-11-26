@@ -38,8 +38,8 @@ class _AnalyticsOverviewState extends State<AnalyticsOverview> {
         StudyMetrics.recoveryStats(widget.state.events, start, until);
     final seconds =
         StudyMetrics.recordedFocus(widget.state.sessions)(start, until);
-    final drift =
-        StudyMetrics.recordedDuration(widget.state.events)(start, until);
+    final drift = StudyMetrics.recordedDuration(
+        widget.state.events, widget.state.sessions)(start, until);
     String duration(int s) =>
         s >= 3600 ? '${s ~/ 3600}h ${s ~/ 60 % 60}m' : '${s ~/ 60}m ${s % 60}s';
     final metrics = [

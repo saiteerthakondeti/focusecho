@@ -167,8 +167,8 @@ class _StudyPlannerState extends State<StudyPlanner> {
     if (!mounted || name == null || name.isEmpty) return;
     final day = await showDatePicker(
         context: context,
-        initialDate: initial,
-        firstDate: slot == null ? today : DateTime(2000),
+        initialDate: initial.isBefore(today) ? today : initial,
+        firstDate: today,
         lastDate: DateTime(2100));
     if (!mounted || day == null) return;
     final start = await showTimePicker(
@@ -183,6 +183,10 @@ class _StudyPlannerState extends State<StudyPlanner> {
             : DateTime.parse(slot['ends_at']).toLocal()));
     if (!mounted || end == null) return;
     final to = DateTime(day.year, day.month, day.day, end.hour, end.minute);
+    if (DateUtils.dateOnly(from).isBefore(DateUtils.dateOnly(DateTime.now()))) {
+      setState(() => notice = 'Choose today or a future date.');
+      return;
+    }
     if (!to.isAfter(from)) {
       setState(() => notice = 'End time must be after start time.');
       return;
@@ -227,6 +231,10 @@ class _StudyPlannerState extends State<StudyPlanner> {
   }
 
   Future<void> move(Map<String, dynamic> row, DateTime date) async {
+    if (DateUtils.dateOnly(date).isBefore(DateUtils.dateOnly(DateTime.now()))) {
+      setState(() => notice = 'Choose today or a future date.');
+      return;
+    }
     final old = DateTime.parse(row['starts_at']).toLocal();
     final length = DateTime.parse(row['ends_at']).difference(old);
     final start =

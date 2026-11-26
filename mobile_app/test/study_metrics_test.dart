@@ -26,6 +26,11 @@ void main() {
     expect([result.today, result.yesterday, result.previousAtThisTime],
         [60, 100, 40]);
     expect(result.hour, isNull);
+    final skewed = drift('legacy', now.subtract(const Duration(minutes: 1)))
+        .copyWith(
+            recoveryTimeSeconds: 4,
+            recoveredAt: now.add(const Duration(hours: 5, minutes: 29)));
+    expect(StudyMetrics.calculate([skewed], [], now).today, 4);
     final midnight = DateTime(now.year, now.month, now.day);
     FocusSession session(int startHour, int? endHour) => FocusSession(
           id: 'session-$startHour',

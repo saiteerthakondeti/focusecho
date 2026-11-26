@@ -35,7 +35,9 @@ class SupabaseService {
     if (client == null || client.auth.currentUser == null) {
       throw StateError('Cloud sync is unavailable or unauthenticated.');
     }
-    final map = Map<String, dynamic>.from(event.toSqliteMap());
+    final map = Map<String, dynamic>.from(event.toSqliteMap())
+      ..['triggered_at'] = event.triggeredAt.toUtc().toIso8601String()
+      ..['recovered_at'] = event.recoveredAt?.toUtc().toIso8601String();
     await client.from('distraction_events').upsert(map);
   }
 
@@ -44,7 +46,9 @@ class SupabaseService {
     final authUserId = client?.auth.currentUser?.id;
     if (client == null || authUserId == null || session.userId != authUserId)
       return false;
-    final row = session.toSqliteMap();
+    final row = session.toSqliteMap()
+      ..['start_time'] = session.startTime.toUtc().toIso8601String()
+      ..['end_time'] = session.endTime?.toUtc().toIso8601String();
     final parked = row['parked_items'];
     if (parked is String) {
       try {
@@ -263,8 +267,78 @@ class SupabaseService {
     if (client == null || client.auth.currentUser?.id != userId) return null;
     final row =
         await client.from('users').select().eq('id', userId).maybeSingle();
-    if (row == null) return null;
-    return UserProfile.fromJson(row);
+    if (client.auth.currentUser?.id != userId) return null;
+    final summary = await client
+        .from('user_xp')
+        .select('total_xp,streak_days')
+        .eq('user_id', userId)
+        .maybeSingle();
+    var awarded = 0, completed = 0;
+    final days = <DateTime>{};
+    for (var offset = 0;; offset += 500) {
+      final page = await client
+          .from('focus_sessions')
+          .select('id,total_xp_earned,end_time')
+          .eq('user_id', userId)
+          .eq('status', 'completed')
+          .order('id')
+          .range(offset, offset + 499);
+      completed += page.length;
+      for (final session in page) {
+        awarded += (session['total_xp_earned'] as num?)?.toInt() ?? 0;
+        final end =
+            DateTime.tryParse(session['end_time']?.toString() ?? '')?.toLocal();
+        if (end != null) days.add(DateTime.utc(end.year, end.month, end.day));
+      }
+      if (page.length < 500) break;
+    }
+    final now = DateTime.now();
+    final today = DateTime.utc(now.year, now.month, now.day);
+    var cursor =
+        days.contains(today) ? today : today.subtract(const Duration(days: 1));
+    var streak = 0;
+    while (days.contains(cursor)) {
+      streak++;
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+    var best = 0, run = 0;
+    DateTime? previous;
+    for (final day in days.where((d) => !d.isAfter(today)).toList()..sort()) {
+      run = previous != null && day.difference(previous).inDays == 1
+          ? run + 1
+          : 1;
+      if (run > best) best = run;
+      previous = day;
+    }
+    final stored = (summary?['total_xp'] as num?)?.toInt() ?? 0;
+    final xp = stored > awarded ? stored : awarded;
+    final level = xp >= AppXP.level4Min
+        ? 4
+        : xp >= AppXP.level3Min
+            ? 3
+            : xp >= AppXP.level2Min
+                ? 2
+                : 1;
+    return UserProfile(
+        id: userId,
+        email: row?['email'] ?? client.auth.currentUser?.email ?? '',
+        displayName: row?['display_name'] ?? '',
+        totalXp: xp,
+        currentLevel: level,
+        levelTitle: [
+          AppStrings.level1,
+          AppStrings.level2,
+          AppStrings.level3,
+          AppStrings.level4
+        ][level - 1],
+        streakDays: days.isEmpty
+            ? (summary?['streak_days'] as num?)?.toInt() ?? 0
+            : streak,
+        longestStreak: best,
+        totalSessions: completed,
+        totalFocusMinutes: 0,
+        joinedAt:
+            DateTime.tryParse(row?['created_at']?.toString() ?? '') ?? now);
   }
 
   Future<void> updateUserXP(String userId, int totalXp, int streakDays) async {

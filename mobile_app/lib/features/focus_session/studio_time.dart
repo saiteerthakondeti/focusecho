@@ -20,10 +20,9 @@ Map<String, int> studioTime(
 
   for (final e in events) {
     final duration = e.timeAwaySeconds ?? e.recoveryTimeSeconds;
-    final until = e.recoveredAt ??
-        (duration == null
-            ? end
-            : e.triggeredAt.add(Duration(seconds: duration)));
+    final until = duration == null
+        ? e.recoveredAt ?? end
+        : e.triggeredAt.add(Duration(seconds: duration));
     final action = DateTime.tryParse(returns[e.id]?.toString() ?? '');
     if (action != null &&
         !action.isBefore(e.triggeredAt) &&

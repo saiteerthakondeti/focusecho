@@ -42,7 +42,7 @@ class StudyMetrics {
     final yesterday = DateTime(now.year, now.month, now.day - 1);
     final priorCutoff = DateTime(
         now.year, now.month, now.day - 1, now.hour, now.minute, now.second);
-    final elapsed = recordedDuration(events);
+    final elapsed = recordedDuration(events, sessions);
     final groups = <int, ({int count, int seconds, int drift})>{};
     for (final s in sessions) {
       final start = s.startTime.toLocal(), end = s.endTime?.toLocal();
@@ -80,14 +80,26 @@ class StudyMetrics {
   }
 
   static int Function(DateTime, DateTime) recordedDuration(
-      List<DistractionEvent> events) {
+      List<DistractionEvent> events, List<FocusSession> sessions) {
+    final parents = {for (final s in sessions) s.id: s};
     final intervals = <({DateTime start, DateTime end})>[];
     for (final e in events) {
       final start = e.triggeredAt.toLocal();
       final seconds = e.timeAwaySeconds ?? e.recoveryTimeSeconds;
-      final end = e.recoveredAt?.toLocal() ??
-          (seconds == null ? null : start.add(Duration(seconds: seconds)));
-      if (end != null && end.isAfter(start)) {
+      if (e.eventType != 'distraction') continue;
+      DateTime? end;
+      if (seconds != null) {
+        if (seconds <= 0) continue;
+        end = start.add(Duration(seconds: seconds));
+      } else {
+        final session = parents[e.sessionId];
+        end = e.recoveredAt;
+        if (session == null || end == null || start.isBefore(session.startTime))
+          continue;
+      }
+      final sessionEnd = parents[e.sessionId]?.endTime;
+      if (sessionEnd != null && end.isAfter(sessionEnd)) end = sessionEnd;
+      if (end.isAfter(start)) {
         intervals.add((start: start, end: end));
       }
     }
@@ -109,16 +121,16 @@ class StudyMetrics {
     intervals.sort((a, b) => a.start.compareTo(b.start));
     return (DateTime from, DateTime until) {
       var cursor = from;
-      var seconds = 0;
+      var elapsed = Duration.zero;
       for (final span in intervals) {
         final start = span.start.isAfter(cursor) ? span.start : cursor;
         final end = span.end.isBefore(until) ? span.end : until;
         if (end.isAfter(start)) {
-          seconds += end.difference(start).inSeconds;
+          elapsed += end.difference(start);
           cursor = end;
         }
       }
-      return seconds;
+      return elapsed.inSeconds;
     };
   }
 }

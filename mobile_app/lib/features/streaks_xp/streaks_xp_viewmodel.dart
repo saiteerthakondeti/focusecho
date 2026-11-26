@@ -105,33 +105,15 @@ class StreaksXpViewModel extends StateNotifier<StreaksXpState> {
         }
       }
 
-      var effectiveXp = AppDependencies.prefs.getInt(AppKeys.xpTotal) ??
-          profile?.totalXp ??
-          0;
-      var effectiveStreak = AppDependencies.prefs.getInt(AppKeys.streakDays) ??
-          profile?.streakDays ??
-          0;
-      if (_userId.isNotEmpty) {
-        try {
-          final xpRow = await Supabase.instance.client
-              .from('user_xp')
-              .select()
-              .eq('user_id', _userId)
-              .maybeSingle();
-          if (xpRow != null) {
-            effectiveXp = (xpRow['total_xp'] as num?)?.toInt() ?? effectiveXp;
-            effectiveStreak =
-                (xpRow['streak_days'] as num?)?.toInt() ?? effectiveStreak;
-          }
-        } catch (e) {
-          debugPrint('XP query failed: $e');
-        }
-      }
-      if (profile != null) {
-        profile =
-            profile.copyWith(totalXp: effectiveXp, streakDays: effectiveStreak);
-      }
-
+      final signedIn = _supabaseService.currentUser != null;
+      final effectiveXp = profile?.totalXp ??
+          (signedIn
+              ? state.totalXp
+              : AppDependencies.prefs.getInt(AppKeys.xpTotal) ?? 0);
+      final effectiveStreak = profile?.streakDays ??
+          (signedIn
+              ? state.streakDays
+              : AppDependencies.prefs.getInt(AppKeys.streakDays) ?? 0);
       final records = {
         for (final s in await _sessionDao.getSessionHistory(100))
           if (s.userId == _userId) s.id: s

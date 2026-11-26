@@ -28,7 +28,9 @@ class AnalyticsScreen extends ConsumerStatefulWidget {
 
 class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   late final Future<bool> _coachConsent = AiCoachService().getOptInStatus();
-  String _duration(int seconds) => '${seconds ~/ 60}m ${seconds % 60}s';
+  String _duration(int seconds) => seconds >= 3600
+      ? '${seconds ~/ 3600}h ${seconds ~/ 60 % 60}m'
+      : '${seconds ~/ 60}m ${seconds % 60}s';
   static const _weekdayNames = [
     'Mon',
     'Tue',

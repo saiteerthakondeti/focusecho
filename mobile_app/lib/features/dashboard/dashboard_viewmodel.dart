@@ -103,45 +103,6 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
         } catch (e) {
           FELog.w('Dashboard', 'Could not fetch profile from Supabase: $e');
         }
-        // Pull XP from user_xp table (same source as Streaks tab)
-        try {
-          final xpRow = await Supabase.instance.client
-              .from('user_xp')
-              .select()
-              .eq('user_id', liveUserId)
-              .maybeSingle();
-          if (xpRow != null && profile != null) {
-            profile = profile.copyWith(
-              totalXp: (xpRow['total_xp'] as num?)?.toInt() ?? profile.totalXp,
-              streakDays:
-                  (xpRow['streak_days'] as num?)?.toInt() ?? profile.streakDays,
-            );
-            FELog.i('Dashboard',
-                'user_xp updated: totalXp=${profile.totalXp}, streak=${profile.streakDays}');
-          } else if (xpRow != null) {
-            final xp = (xpRow['total_xp'] as num?)?.toInt() ?? 0;
-            final streak = (xpRow['streak_days'] as num?)?.toInt() ?? 0;
-            profile = UserProfile(
-              id: liveUserId,
-              email: authUser.email ?? '',
-              displayName: '',
-              currentLevel: 1,
-              levelTitle: '',
-              totalXp: xp,
-              streakDays: streak,
-              longestStreak: streak,
-              totalSessions: 0,
-              totalFocusMinutes: 0,
-              joinedAt: DateTime.now(),
-            );
-            FELog.i('Dashboard',
-                'Synthesised profile from user_xp: totalXp=$xp, streak=$streak');
-          } else {
-            FELog.d('Dashboard', 'No user_xp row found for $liveUserId');
-          }
-        } catch (e) {
-          FELog.w('Dashboard', 'Could not fetch user_xp for dashboard: $e');
-        }
       }
 
       // Load full 7-day history so UTC-offset sessions from earlier today
