@@ -155,14 +155,14 @@ class DashboardViewModel extends StateNotifier<DashboardState> {
   }
 
   Future<List<FocusSession>> _loadSessionsFromCloud() async {
+    final userId = _supabaseService.currentUser?.id;
+    if (userId == null) return _focusSessionDao.getSessionHistory(50);
     try {
       final cutoff = DateTime.now()
           .toUtc()
           .subtract(const Duration(days: 14))
           .toIso8601String();
       final client = Supabase.instance.client;
-      final userId = _supabaseService.currentUser?.id;
-      if (userId == null) return _focusSessionDao.getSessionHistory(50);
       final rows = await client
           .from('focus_sessions')
           .select()
